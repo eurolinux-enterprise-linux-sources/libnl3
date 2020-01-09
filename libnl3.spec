@@ -3,7 +3,7 @@ Group: Development/Libraries
 License: LGPLv2
 Name: libnl3
 Version: 3.2.21
-Release: 7%{?dist}
+Release: 8%{?dist}
 URL: http://www.infradead.org/~tgr/libnl/
 Source: http://www.infradead.org/~tgr/libnl/files/libnl-%{version}.tar.gz
 Source1: http://www.infradead.org/~tgr/libnl/files/libnl-doc-%{version}.tar.gz
@@ -19,6 +19,7 @@ Patch5: 0005-rtnl_route_build_msg-set-scope.patch
 Patch6: 0006-nl_msec2str-fix.patch
 Patch7: 0007-relax-parsing-protinfo.patch
 Patch8: 0008-add-private-header-can-netlink-h.patch
+Patch9: 0009-get-kernel-nle-opnotsupp-rh1168915.patch
 
 %description
 This package contains a convenience library to simplify
@@ -63,6 +64,7 @@ This package contains libnl3 API documentation
 %patch6 -p1 -b .0006-nl_msec2str-fix.orig
 %patch7 -p1 -b .0007-relax-parsing-protinfo.orig
 %patch8 -p1 -b .0008-add-private-header-can-netlink-h.orig
+%patch9 -p1
 
 tar -xzf %SOURCE1
 
@@ -115,8 +117,11 @@ find $RPM_BUILD_ROOT -name \*.la -delete
 %doc libnl-doc-%{version}/api/*
 
 %changelog
+* Sun Nov 22 2015 Thomas Haller <thaller@redhat.com> - 3.2.21-8
+- properly return NLE_OPNOTSUPP on rtnl_link_get_kernel() failure (rh #1168915)
+
 * Tue Apr 29 2014 Thomas Haller <thaller@redhat.com> - 3.2.21-7
-* Add local header file linux/can/netlink.h to build on rhel-6
+- Add local header file linux/can/netlink.h to build on rhel-6
 
 * Fri Mar 21 2014 Thomas Haller <thaller@redhat.com> - 3.2.21-6
 - fix rtnl_link_get_stat() for IPSTATS_MIB_* after kernel API breakage

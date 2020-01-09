@@ -1,0 +1,271 @@
+From 80019417452a7489105f86ba299d47ff693801be Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 26 Nov 2014 18:13:36 +0100
+Subject: [PATCH 1/3] trival: white space fix in lib/nl.c
+
+Acked-by: Thomas Graf <tgraf@suug.ch>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 16d16b9a76db9411bf8c019db39e7e66d6114a8f)
+---
+ lib/nl.c | 18 +++++++++---------
+ 1 file changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/lib/nl.c b/lib/nl.c
+index 78873d9..b6b12b6 100644
+--- a/lib/nl.c
++++ b/lib/nl.c
+@@ -824,7 +824,7 @@ continue_reading:
+ 				interrupted = 1;
+ 			}
+ 		}
+-	
++
+ 		/* Other side wishes to see an ack for this message */
+ 		if (hdr->nlmsg_flags & NLM_F_ACK) {
+ 			if (cb->cb_set[NL_CB_SEND_ACK])
+@@ -912,7 +912,7 @@ skip:
+ 		err = 0;
+ 		hdr = nlmsg_next(hdr, &n);
+ 	}
+-	
++
+ 	nlmsg_free(msg);
+ 	free(buf);
+ 	free(creds);
+@@ -1064,21 +1064,21 @@ static int __pickup_answer(struct nl_msg *msg, void *arg)
+ 
+ /**
+  * Pickup netlink answer, parse is and return object
+- * @arg sk		Netlink socket
+- * @arg parser		Parser function to parse answer
+- * @arg result		Result pointer to return parsed object
++ * @arg sk              Netlink socket
++ * @arg parser          Parser function to parse answer
++ * @arg result          Result pointer to return parsed object
+  *
+  * @return 0 on success or a negative error code.
+  */
+ int nl_pickup(struct nl_sock *sk,
+-	      int (*parser)(struct nl_cache_ops *, struct sockaddr_nl *,
+-			    struct nlmsghdr *, struct nl_parser_param *),
+-	      struct nl_object **result)
++              int (*parser)(struct nl_cache_ops *, struct sockaddr_nl *,
++                            struct nlmsghdr *, struct nl_parser_param *),
++              struct nl_object **result)
+ {
+ 	struct nl_cb *cb;
+ 	int err;
+ 	struct pickup_param pp = {
+-		.parser = parser,
++	        .parser = parser,
+ 	};
+ 
+ 	cb = nl_cb_clone(sk->s_cb);
+-- 
+2.5.0
+
+
+From 8d6de106749f8226777f90dbdb4aa1b1195868ed Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 26 Nov 2014 18:13:37 +0100
+Subject: [PATCH 2/3] nl: add function nl_pickup_keep_syserr()
+
+nl_pickup() converts error codes from netlink into
+nl error codes using nl_syserr2nlerr(). The latter function
+mangles different error codes to the same nl error code.
+
+Add a new function, that returns both the nl error code
+and the original error code.
+
+Acked-by: Thomas Graf <tgraf@suug.ch>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 8b023fd441c3fd96aad2acca31d2702b1aa1f21e)
+---
+ include/netlink/netlink.h |  5 +++++
+ lib/nl.c                  | 31 +++++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/include/netlink/netlink.h b/include/netlink/netlink.h
+index 5f68548..c620249 100644
+--- a/include/netlink/netlink.h
++++ b/include/netlink/netlink.h
+@@ -84,6 +84,11 @@ extern int			nl_pickup(struct nl_sock *,
+ 						struct nlmsghdr *,
+ 						struct nl_parser_param *),
+ 					  struct nl_object **);
++extern int                      nl_pickup_keep_syserr(struct nl_sock *sk,
++                                                      int (*parser)(struct nl_cache_ops *, struct sockaddr_nl *,
++                                                                    struct nlmsghdr *, struct nl_parser_param *),
++                                                      struct nl_object **result,
++                                                      int *syserror);
+ /* Netlink Family Translations */
+ extern char *			nl_nlfamily2str(int, char *, size_t);
+ extern int			nl_str2nlfamily(const char *);
+diff --git a/lib/nl.c b/lib/nl.c
+index b6b12b6..01a7e29 100644
+--- a/lib/nl.c
++++ b/lib/nl.c
+@@ -1034,6 +1034,7 @@ struct pickup_param
+ 	int (*parser)(struct nl_cache_ops *, struct sockaddr_nl *,
+ 		      struct nlmsghdr *, struct nl_parser_param *);
+ 	struct nl_object *result;
++	int *syserror;
+ };
+ 
+ static int __store_answer(struct nl_object *obj, struct nl_parser_param *p)
+@@ -1060,6 +1061,13 @@ static int __pickup_answer(struct nl_msg *msg, void *arg)
+ 	return pp->parser(NULL, &msg->nm_src, msg->nm_nlh, &parse_arg);
+ }
+ 
++static int __pickup_answer_syserr(struct sockaddr_nl *nla, struct nlmsgerr *nlerr, void *arg)
++{
++	*(((struct pickup_param *) arg)->syserror) = nlerr->error;
++
++	return -nl_syserr2nlerr(nlerr->error);
++}
++
+ /** @endcond */
+ 
+ /**
+@@ -1075,6 +1083,24 @@ int nl_pickup(struct nl_sock *sk,
+                             struct nlmsghdr *, struct nl_parser_param *),
+               struct nl_object **result)
+ {
++	return nl_pickup_keep_syserr(sk, parser, result, NULL);
++}
++
++/**
++ * Pickup netlink answer, parse is and return object with preserving system error
++ * @arg sk              Netlink socket
++ * @arg parser          Parser function to parse answer
++ * @arg result          Result pointer to return parsed object
++ * @arg syserr          Result pointer for the system error in case of failure
++ *
++ * @return 0 on success or a negative error code.
++ */
++int nl_pickup_keep_syserr(struct nl_sock *sk,
++                          int (*parser)(struct nl_cache_ops *, struct sockaddr_nl *,
++                                        struct nlmsghdr *, struct nl_parser_param *),
++                          struct nl_object **result,
++                          int *syserror)
++{
+ 	struct nl_cb *cb;
+ 	int err;
+ 	struct pickup_param pp = {
+@@ -1086,6 +1112,11 @@ int nl_pickup(struct nl_sock *sk,
+ 		return -NLE_NOMEM;
+ 
+ 	nl_cb_set(cb, NL_CB_VALID, NL_CB_CUSTOM, __pickup_answer, &pp);
++	if (syserror) {
++		*syserror = 0;
++		pp.syserror = syserror;
++		nl_cb_err(cb, NL_CB_CUSTOM, __pickup_answer_syserr, &pp);
++	}
+ 
+ 	err = nl_recvmsgs(sk, cb);
+ 	if (err < 0)
+-- 
+2.5.0
+
+
+From fcadf8fd1e16bfb7e1ae94af4a79ecb8c3b7a683 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 26 Nov 2014 18:17:16 +0100
+Subject: [PATCH 3/3] route/link: return -NLE_OPNOTSUPP in
+ rtnl_link_get_kernel() for old kernels
+
+Older kernels without patch a3d1289126e7b14307074b76bf1677015ea5036f do
+not support rtnl_getlink() by ifname. Detect this situation and fail
+with -NLE_OPNOTSUPP instead of -NLE_INVAL.
+
+This changes behavior in returning a different error code for this
+case.
+
+Acked-by: Thomas Graf <tgraf@suug.ch>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit b54775d3169b56d9c0aee47d6937b0358a5443e0)
+---
+ include/netlink/utils.h |  8 ++++++++
+ lib/route/link.c        | 18 +++++++++++++++++-
+ lib/utils.c             |  2 +-
+ 3 files changed, 26 insertions(+), 2 deletions(-)
+
+diff --git a/include/netlink/utils.h b/include/netlink/utils.h
+index 2094bb4..a59e596 100644
+--- a/include/netlink/utils.h
++++ b/include/netlink/utils.h
+@@ -90,6 +90,14 @@ enum {
+ 	NL_CAPABILITY_ROUTE_BUILD_MSG_SET_SCOPE         = 1,
+ #define NL_CAPABILITY_ROUTE_BUILD_MSG_SET_SCOPE NL_CAPABILITY_ROUTE_BUILD_MSG_SET_SCOPE
+ 
++	/**
++	 * Indicate that rtnl_link_get_kernel() fails with -NLE_OPNOTSUPP in case
++	 * of older kernals not supporting lookup by ifname. This changes behavior
++	 * from returning -NLE_INVAL to return -NLE_OPNOTSUPP.
++	 */
++	NL_CAPABILITY_ROUTE_LINK_GET_KERNEL_FAIL_OPNOTSUPP = 5,
++#define NL_CAPABILITY_ROUTE_LINK_GET_KERNEL_FAIL_OPNOTSUPP NL_CAPABILITY_ROUTE_LINK_GET_KERNEL_FAIL_OPNOTSUPP
++
+ 	__NL_CAPABILITY_MAX
+ #define NL_CAPABILITY_MAX                               (__NL_CAPABILITY_MAX - 1)
+ };
+diff --git a/lib/route/link.c b/lib/route/link.c
+index 8fe3376..1b03322 100644
+--- a/lib/route/link.c
++++ b/lib/route/link.c
+@@ -1089,6 +1089,11 @@ nla_put_failure:
+  * pointer or -NLE_OBJ_NOTFOUND is returned if no matching link was
+  * found.
+  *
++ * Older kernels do not support lookup by name. In that case, libnl
++ * will fail with -NLE_OPNOTSUPP. Note that previous version of libnl
++ * failed in this case with -NLE_INVAL. You can check libnl behavior
++ * using NL_CAPABILITY_ROUTE_LINK_GET_KERNEL_FAIL_OPNOTSUPP capability.
++ *
+  * @route_doc{link_direct_lookup, Lookup Single Link (Direct Lookup)}
+  * @return 0 on success or a negative error code.
+  */
+@@ -1098,6 +1103,7 @@ int rtnl_link_get_kernel(struct nl_sock *sk, int ifindex, const char *name,
+ 	struct nl_msg *msg = NULL;
+ 	struct nl_object *obj;
+ 	int err;
++	int syserr;
+ 
+ 	if ((err = rtnl_link_build_get_request(ifindex, name, &msg)) < 0)
+ 		return err;
+@@ -1107,8 +1113,18 @@ int rtnl_link_get_kernel(struct nl_sock *sk, int ifindex, const char *name,
+ 	if (err < 0)
+ 		return err;
+ 
+-	if ((err = nl_pickup(sk, link_msg_parser, &obj)) < 0)
++	if ((err = nl_pickup_keep_syserr(sk, link_msg_parser, &obj, &syserr)) < 0) {
++		if (syserr == -EINVAL &&
++		    ifindex <= 0 &&
++		    name && *name) {
++			/* Older kernels do not support lookup by ifname. This was added
++			 * by commit kernel a3d1289126e7b14307074b76bf1677015ea5036f .
++			 * Detect this error case and return NLE_OPNOTSUPP instead of
++			 * NLE_INVAL. */
++			return -NLE_OPNOTSUPP;
++		}
+ 		return err;
++	}
+ 
+ 	/* We have used link_msg_parser(), object is definitely a link */
+ 	*result = (struct rtnl_link *) obj;
+diff --git a/lib/utils.c b/lib/utils.c
+index 44350c3..d33057f 100644
+--- a/lib/utils.c
++++ b/lib/utils.c
+@@ -1139,7 +1139,7 @@ int nl_has_capability (int capability)
+ 			0,
+ 			0,
+ 			0,
+-			0,
++			NL_CAPABILITY_ROUTE_LINK_GET_KERNEL_FAIL_OPNOTSUPP,
+ 			0,
+ 			0,
+ 			0),
+-- 
+2.5.0
+

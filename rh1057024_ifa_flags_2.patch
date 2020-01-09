@@ -1,0 +1,40 @@
+From 6ad0773a41a713421caf3d88078aad634bc915e0 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Thu, 2 Jan 2014 10:51:38 +0100
+Subject: [PATCH 2/3] addr: add address flag IFA_F_MANAGETEMPADDR
+
+(cherry picked from commit dcc0baac020e033c4325e4d89c92aaab03f01b01)
+
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+---
+ include/linux/if_addr.h | 1 +
+ lib/route/addr.c        | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/include/linux/if_addr.h b/include/linux/if_addr.h
+index 63da1cd..94b32b4 100644
+--- a/include/linux/if_addr.h
++++ b/include/linux/if_addr.h
+@@ -48,6 +48,7 @@ enum {
+ #define IFA_F_DEPRECATED	0x20
+ #define IFA_F_TENTATIVE		0x40
+ #define IFA_F_PERMANENT		0x80
++#define IFA_F_MANAGETEMPADDR	0x100
+ 
+ struct ifa_cacheinfo {
+ 	__u32	ifa_prefered;
+diff --git a/lib/route/addr.c b/lib/route/addr.c
+index bcdc319..c3c59ce 100644
+--- a/lib/route/addr.c
++++ b/lib/route/addr.c
+@@ -1023,6 +1023,7 @@ static const struct trans_tbl addr_flags[] = {
+ 	__ADD(IFA_F_DEPRECATED, deprecated)
+ 	__ADD(IFA_F_TENTATIVE, tentative)
+ 	__ADD(IFA_F_PERMANENT, permanent)
++	__ADD(IFA_F_MANAGETEMPADDR, mngtmpaddr)
+ };
+ 
+ char *rtnl_addr_flags2str(int flags, char *buf, size_t size)
+-- 
+1.8.3.1
+

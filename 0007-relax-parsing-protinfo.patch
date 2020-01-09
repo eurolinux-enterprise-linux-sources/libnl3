@@ -1,0 +1,532 @@
+From b14cc1f2fb310e6ff00d3df867dc336d6b521f3f Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Thu, 20 Mar 2014 19:18:42 +0100
+Subject: [PATCH 1/3] route: don't enforce minlen in inet6_parse_protinfo()
+ (IFLA_PROTINFO) and inet_parse_af() (IFLA_AF_SPEC)
+
+Older kernel version might have fewer values defined, so they would send
+netlink messages that got rejected. Only check that at least one value
+got sent.
+
+This is especially grave as libnl uses an internal copy of the
+kernel header files. Thus not only it is bound to the installed kernel
+headers but to the libnl internal header copies that might easily be out
+of sync with the kernel.
+
+This affects IFLA_PROTINFO, inet6_parse_protinfo():
+  - tb[IFLA_INET6_CONF], expecting DEVCONF_MAX
+  - tb[IFLA_INET6_STATS], expecting __IPSTATS_MIB_MAX
+  - tb[IFLA_INET6_ICMP6STATS], expecting __ICMP6_MIB_MAX
+and IFLA_AF_SPEC, inet_parse_af():
+  - tb[IFLA_INET_CONF], expecting IPV4_DEVCONF_MAX
+
+https://bugzilla.redhat.com/show_bug.cgi?id=1062533
+
+Acked-by: Thomas Graf <tgraf@suug.ch>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit dfd0a80ec845a800504fecb936c2b33d6918fc9c)
+---
+ lib/route/link/inet.c  |  4 +++-
+ lib/route/link/inet6.c | 18 +++++++++++++-----
+ 2 files changed, 16 insertions(+), 6 deletions(-)
+
+diff --git a/lib/route/link/inet.c b/lib/route/link/inet.c
+index e2c867d..eb2e8ae 100644
+--- a/lib/route/link/inet.c
++++ b/lib/route/link/inet.c
+@@ -92,7 +92,7 @@ static void inet_free(struct rtnl_link *link, void *data)
+ }
+ 
+ static struct nla_policy inet_policy[IFLA_INET6_MAX+1] = {
+-	[IFLA_INET_CONF]	= { .minlen = IPV4_DEVCONF_MAX * 4 },
++	[IFLA_INET_CONF]	= { .minlen = 4 },
+ };
+ 
+ static int inet_parse_af(struct rtnl_link *link, struct nlattr *attr, void *data)
+@@ -104,6 +104,8 @@ static int inet_parse_af(struct rtnl_link *link, struct nlattr *attr, void *data
+ 	err = nla_parse_nested(tb, IFLA_INET_MAX, attr, inet_policy);
+ 	if (err < 0)
+ 		return err;
++	if (tb[IFLA_INET_CONF] && nla_len(tb[IFLA_INET_CONF]) % 4)
++		return -EINVAL;
+ 
+ 	if (tb[IFLA_INET_CONF])
+ 		nla_memcpy(&id->i_conf, tb[IFLA_INET_CONF], sizeof(id->i_conf));
+diff --git a/lib/route/link/inet6.c b/lib/route/link/inet6.c
+index 4c627bd..f171fed 100644
+--- a/lib/route/link/inet6.c
++++ b/lib/route/link/inet6.c
+@@ -45,9 +45,9 @@ static void inet6_free(struct rtnl_link *link, void *data)
+ static struct nla_policy inet6_policy[IFLA_INET6_MAX+1] = {
+ 	[IFLA_INET6_FLAGS]	= { .type = NLA_U32 },
+ 	[IFLA_INET6_CACHEINFO]	= { .minlen = sizeof(struct ifla_cacheinfo) },
+-	[IFLA_INET6_CONF]	= { .minlen = DEVCONF_MAX * 4 },
+-	[IFLA_INET6_STATS]	= { .minlen = __IPSTATS_MIB_MAX * 8 },
+-	[IFLA_INET6_ICMP6STATS]	= { .minlen = __ICMP6_MIB_MAX * 8 },
++	[IFLA_INET6_CONF]	= { .minlen = 4 },
++	[IFLA_INET6_STATS]	= { .minlen = 8 },
++	[IFLA_INET6_ICMP6STATS]	= { .minlen = 8 },
+ };
+ 
+ static int inet6_parse_protinfo(struct rtnl_link *link, struct nlattr *attr,
+@@ -60,6 +60,12 @@ static int inet6_parse_protinfo(struct rtnl_link *link, struct nlattr *attr,
+ 	err = nla_parse_nested(tb, IFLA_INET6_MAX, attr, inet6_policy);
+ 	if (err < 0)
+ 		return err;
++	if (tb[IFLA_INET6_CONF] && nla_len(tb[IFLA_INET6_CONF]) % 4)
++		return -EINVAL;
++	if (tb[IFLA_INET6_STATS] && nla_len(tb[IFLA_INET6_STATS]) % 8)
++		return -EINVAL;
++	if (tb[IFLA_INET6_ICMP6STATS] && nla_len(tb[IFLA_INET6_ICMP6STATS]) % 8)
++		return -EINVAL;
+ 
+ 	if (tb[IFLA_INET6_FLAGS])
+ 		i6->i6_flags = nla_get_u32(tb[IFLA_INET6_FLAGS]);
+@@ -80,8 +86,9 @@ static int inet6_parse_protinfo(struct rtnl_link *link, struct nlattr *attr,
+ 		unsigned char *cnt = nla_data(tb[IFLA_INET6_STATS]);
+ 		uint64_t stat;
+ 		int i;
++		int len = min_t(int, __IPSTATS_MIB_MAX, nla_len(tb[IFLA_INET6_STATS]) / 8);
+ 
+-		for (i = 1; i < __IPSTATS_MIB_MAX; i++) {
++		for (i = 1; i < len; i++) {
+ 			memcpy(&stat, &cnt[i * sizeof(stat)], sizeof(stat));
+ 			rtnl_link_set_stat(link, RTNL_LINK_IP6_INPKTS + i - 1,
+ 					   stat);
+@@ -92,8 +99,9 @@ static int inet6_parse_protinfo(struct rtnl_link *link, struct nlattr *attr,
+ 		unsigned char *cnt = nla_data(tb[IFLA_INET6_ICMP6STATS]);
+ 		uint64_t stat;
+ 		int i;
++		int len = min_t(int, __ICMP6_MIB_MAX, nla_len(tb[IFLA_INET6_ICMP6STATS]) / 8);
+ 
+-		for (i = 1; i < __ICMP6_MIB_MAX; i++) {
++		for (i = 1; i < len; i++) {
+ 			memcpy(&stat, &cnt[i * sizeof(stat)], sizeof(stat));
+ 			rtnl_link_set_stat(link, RTNL_LINK_ICMP6_INMSGS + i - 1,
+ 					   stat);
+-- 
+1.8.5.3
+
+
+From b104b959d0508d89be672d751b370ad92cb0dc72 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Thu, 20 Mar 2014 19:18:43 +0100
+Subject: [PATCH 2/3] route: detect missing cfgid in rtnl_link_inet_get_conf()
+
+If the netlink message for IFLA_INET_CONF contains less then
+IPV4_DEVCONF_MAX entires, the last entries in i_conf are unset.
+Modify rtnl_link_inet_get_conf() to return -EINVAL when accessing
+an unset cfgid.
+
+Acked-by: Thomas Graf <tgraf@suug.ch>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 3584a7ab55cb93225a0216385b62fbe5331388cd)
+---
+ lib/route/link/inet.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/lib/route/link/inet.c b/lib/route/link/inet.c
+index eb2e8ae..2e61323 100644
+--- a/lib/route/link/inet.c
++++ b/lib/route/link/inet.c
+@@ -107,8 +107,14 @@ static int inet_parse_af(struct rtnl_link *link, struct nlattr *attr, void *data
+ 	if (tb[IFLA_INET_CONF] && nla_len(tb[IFLA_INET_CONF]) % 4)
+ 		return -EINVAL;
+ 
+-	if (tb[IFLA_INET_CONF])
++	if (tb[IFLA_INET_CONF]) {
++		int i;
++		int len = min_t(int, IPV4_DEVCONF_MAX, nla_len(tb[IFLA_INET_CONF]) / 4);
++
++		for (i = 0; i < len; i++)
++			id->i_confset[i] = 1;
+ 		nla_memcpy(&id->i_conf, tb[IFLA_INET_CONF], sizeof(id->i_conf));
++	}
+ 
+ 	return 0;
+ }
+@@ -186,7 +192,7 @@ static void inet_dump_details(struct rtnl_link *link,
+ 	for (i = 0; i < IPV4_DEVCONF_MAX; i++) {
+ 		nl_dump_line(p, "%-19s %3u",
+ 			rtnl_link_inet_devconf2str(i+1, buf, sizeof(buf)),
+-			id->i_conf[i]);
++			id->i_confset[i] ? id->i_conf[i] : 0);
+ 
+ 		if (++n == 3) {
+ 			nl_dump(p, "\n");
+@@ -222,6 +228,8 @@ static struct rtnl_link_af_ops inet_ops = {
+  * @return 0 on success or a negative error code.
+  * @return -NLE_RANGE cfgid is out of range, 1..IPV4_DEVCONF_MAX
+  * @return -NLE_NOATTR configuration setting not available
++ * @return -NLE_INVAL cfgid not set. If the link was received via netlink,
++ *                    it means that the cfgid is not supported.
+  */
+ int rtnl_link_inet_get_conf(struct rtnl_link *link, const unsigned int cfgid,
+ 			    uint32_t *res)
+@@ -234,6 +242,8 @@ int rtnl_link_inet_get_conf(struct rtnl_link *link, const unsigned int cfgid,
+ 	if (!(id = rtnl_link_af_alloc(link, &inet_ops)))
+ 		return -NLE_NOATTR;
+ 
++	if (!id->i_confset[cfgid - 1])
++		return -NLE_INVAL;
+ 	*res = id->i_conf[cfgid - 1];
+ 
+ 	return 0;
+-- 
+1.8.5.3
+
+
+From 8421ae8b6bfa7a88cf9cdddf07fabd88362de963 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Thu, 20 Mar 2014 19:18:44 +0100
+Subject: [PATCH 3/3] route: update kernel header snmp.h and fix
+ inet6_parse_protinfo() after kernel API breakage
+
+Take 'include/uapi/linux/snmp.h' from current kernel v3.13
+(commit d8ec26d7f8287f5788a494f56e8814210f0e64be).
+
+The header file added new values for IPSTATS_MIB_* and ICMP6_MIB_*, but
+more importantly, the kernel broke user space API by reordering enum values in
+IPSTATS_MIB_*. Add a workaround when parsing IFLA_PROTINFO trying to
+be compatible with both older and newer kernels.
+
+Note that this workaround might fail for some specific kernel versions by
+assuming the old enum value mapping, although the kernel version already
+contains the API change. In this case rtnl_link_get_stat() mixes up
+values.
+
+Acked-by: Thomas Graf <tgraf@suug.ch>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 5981a39583ab65dca230a8ee70625626d9ec9fc8)
+---
+ include/linux/snmp.h         |  43 +++++++++++++---
+ include/netlink/route/link.h |   6 +++
+ lib/route/link.c             |   6 +++
+ lib/route/link/inet6.c       | 117 +++++++++++++++++++++++++++++++++++++++----
+ 4 files changed, 156 insertions(+), 16 deletions(-)
+
+diff --git a/include/linux/snmp.h b/include/linux/snmp.h
+index 12b2b18..1bdb4a3 100644
+--- a/include/linux/snmp.h
++++ b/include/linux/snmp.h
+@@ -18,7 +18,14 @@
+ enum
+ {
+ 	IPSTATS_MIB_NUM = 0,
++/* frequently written fields in fast path, kept in same cache line */
+ 	IPSTATS_MIB_INPKTS,			/* InReceives */
++	IPSTATS_MIB_INOCTETS,			/* InOctets */
++	IPSTATS_MIB_INDELIVERS,			/* InDelivers */
++	IPSTATS_MIB_OUTFORWDATAGRAMS,		/* OutForwDatagrams */
++	IPSTATS_MIB_OUTPKTS,			/* OutRequests */
++	IPSTATS_MIB_OUTOCTETS,			/* OutOctets */
++/* other fields */
+ 	IPSTATS_MIB_INHDRERRORS,		/* InHdrErrors */
+ 	IPSTATS_MIB_INTOOBIGERRORS,		/* InTooBigErrors */
+ 	IPSTATS_MIB_INNOROUTES,			/* InNoRoutes */
+@@ -26,9 +33,6 @@ enum
+ 	IPSTATS_MIB_INUNKNOWNPROTOS,		/* InUnknownProtos */
+ 	IPSTATS_MIB_INTRUNCATEDPKTS,		/* InTruncatedPkts */
+ 	IPSTATS_MIB_INDISCARDS,			/* InDiscards */
+-	IPSTATS_MIB_INDELIVERS,			/* InDelivers */
+-	IPSTATS_MIB_OUTFORWDATAGRAMS,		/* OutForwDatagrams */
+-	IPSTATS_MIB_OUTPKTS,			/* OutRequests */
+ 	IPSTATS_MIB_OUTDISCARDS,		/* OutDiscards */
+ 	IPSTATS_MIB_OUTNOROUTES,		/* OutNoRoutes */
+ 	IPSTATS_MIB_REASMTIMEOUT,		/* ReasmTimeout */
+@@ -42,12 +46,15 @@ enum
+ 	IPSTATS_MIB_OUTMCASTPKTS,		/* OutMcastPkts */
+ 	IPSTATS_MIB_INBCASTPKTS,		/* InBcastPkts */
+ 	IPSTATS_MIB_OUTBCASTPKTS,		/* OutBcastPkts */
+-	IPSTATS_MIB_INOCTETS,			/* InOctets */
+-	IPSTATS_MIB_OUTOCTETS,			/* OutOctets */
+ 	IPSTATS_MIB_INMCASTOCTETS,		/* InMcastOctets */
+ 	IPSTATS_MIB_OUTMCASTOCTETS,		/* OutMcastOctets */
+ 	IPSTATS_MIB_INBCASTOCTETS,		/* InBcastOctets */
+ 	IPSTATS_MIB_OUTBCASTOCTETS,		/* OutBcastOctets */
++	IPSTATS_MIB_CSUMERRORS,			/* InCsumErrors */
++	IPSTATS_MIB_NOECTPKTS,			/* InNoECTPkts */
++	IPSTATS_MIB_ECT1PKTS,			/* InECT1Pkts */
++	IPSTATS_MIB_ECT0PKTS,			/* InECT0Pkts */
++	IPSTATS_MIB_CEPKTS,			/* InCEPkts */
+ 	__IPSTATS_MIB_MAX
+ };
+ 
+@@ -85,6 +92,7 @@ enum
+ 	ICMP_MIB_OUTTIMESTAMPREPS,		/* OutTimestampReps */
+ 	ICMP_MIB_OUTADDRMASKS,			/* OutAddrMasks */
+ 	ICMP_MIB_OUTADDRMASKREPS,		/* OutAddrMaskReps */
++	ICMP_MIB_CSUMERRORS,			/* InCsumErrors */
+ 	__ICMP_MIB_MAX
+ };
+ 
+@@ -101,6 +109,7 @@ enum
+ 	ICMP6_MIB_INERRORS,			/* InErrors */
+ 	ICMP6_MIB_OUTMSGS,			/* OutMsgs */
+ 	ICMP6_MIB_OUTERRORS,			/* OutErrors */
++	ICMP6_MIB_CSUMERRORS,			/* InCsumErrors */
+ 	__ICMP6_MIB_MAX
+ };
+ 
+@@ -128,6 +137,7 @@ enum
+ 	TCP_MIB_RETRANSSEGS,			/* RetransSegs */
+ 	TCP_MIB_INERRS,				/* InErrs */
+ 	TCP_MIB_OUTRSTS,			/* OutRsts */
++	TCP_MIB_CSUMERRORS,			/* InCsumErrors */
+ 	__TCP_MIB_MAX
+ };
+ 
+@@ -145,6 +155,7 @@ enum
+ 	UDP_MIB_OUTDATAGRAMS,			/* OutDatagrams */
+ 	UDP_MIB_RCVBUFERRORS,			/* RcvbufErrors */
+ 	UDP_MIB_SNDBUFERRORS,			/* SndbufErrors */
++	UDP_MIB_CSUMERRORS,			/* InCsumErrors */
+ 	__UDP_MIB_MAX
+ };
+ 
+@@ -192,7 +203,6 @@ enum
+ 	LINUX_MIB_TCPPARTIALUNDO,		/* TCPPartialUndo */
+ 	LINUX_MIB_TCPDSACKUNDO,			/* TCPDSACKUndo */
+ 	LINUX_MIB_TCPLOSSUNDO,			/* TCPLossUndo */
+-	LINUX_MIB_TCPLOSS,			/* TCPLoss */
+ 	LINUX_MIB_TCPLOSTRETRANSMIT,		/* TCPLostRetransmit */
+ 	LINUX_MIB_TCPRENOFAILURES,		/* TCPRenoFailures */
+ 	LINUX_MIB_TCPSACKFAILURES,		/* TCPSackFailures */
+@@ -201,6 +211,8 @@ enum
+ 	LINUX_MIB_TCPFORWARDRETRANS,		/* TCPForwardRetrans */
+ 	LINUX_MIB_TCPSLOWSTARTRETRANS,		/* TCPSlowStartRetrans */
+ 	LINUX_MIB_TCPTIMEOUTS,			/* TCPTimeouts */
++	LINUX_MIB_TCPLOSSPROBES,		/* TCPLossProbes */
++	LINUX_MIB_TCPLOSSPROBERECOVERY,		/* TCPLossProbeRecovery */
+ 	LINUX_MIB_TCPRENORECOVERYFAIL,		/* TCPRenoRecoveryFail */
+ 	LINUX_MIB_TCPSACKRECOVERYFAIL,		/* TCPSackRecoveryFail */
+ 	LINUX_MIB_TCPSCHEDULERFAILED,		/* TCPSchedulerFailed */
+@@ -209,7 +221,6 @@ enum
+ 	LINUX_MIB_TCPDSACKOFOSENT,		/* TCPDSACKOfoSent */
+ 	LINUX_MIB_TCPDSACKRECV,			/* TCPDSACKRecv */
+ 	LINUX_MIB_TCPDSACKOFORECV,		/* TCPDSACKOfoRecv */
+-	LINUX_MIB_TCPABORTONSYN,		/* TCPAbortOnSyn */
+ 	LINUX_MIB_TCPABORTONDATA,		/* TCPAbortOnData */
+ 	LINUX_MIB_TCPABORTONCLOSE,		/* TCPAbortOnClose */
+ 	LINUX_MIB_TCPABORTONMEMORY,		/* TCPAbortOnMemory */
+@@ -231,6 +242,22 @@ enum
+ 	LINUX_MIB_TCPDEFERACCEPTDROP,
+ 	LINUX_MIB_IPRPFILTER, /* IP Reverse Path Filter (rp_filter) */
+ 	LINUX_MIB_TCPTIMEWAITOVERFLOW,		/* TCPTimeWaitOverflow */
++	LINUX_MIB_TCPREQQFULLDOCOOKIES,		/* TCPReqQFullDoCookies */
++	LINUX_MIB_TCPREQQFULLDROP,		/* TCPReqQFullDrop */
++	LINUX_MIB_TCPRETRANSFAIL,		/* TCPRetransFail */
++	LINUX_MIB_TCPRCVCOALESCE,		/* TCPRcvCoalesce */
++	LINUX_MIB_TCPOFOQUEUE,			/* TCPOFOQueue */
++	LINUX_MIB_TCPOFODROP,			/* TCPOFODrop */
++	LINUX_MIB_TCPOFOMERGE,			/* TCPOFOMerge */
++	LINUX_MIB_TCPCHALLENGEACK,		/* TCPChallengeACK */
++	LINUX_MIB_TCPSYNCHALLENGE,		/* TCPSYNChallenge */
++	LINUX_MIB_TCPFASTOPENACTIVE,		/* TCPFastOpenActive */
++	LINUX_MIB_TCPFASTOPENPASSIVE,		/* TCPFastOpenPassive*/
++	LINUX_MIB_TCPFASTOPENPASSIVEFAIL,	/* TCPFastOpenPassiveFail */
++	LINUX_MIB_TCPFASTOPENLISTENOVERFLOW,	/* TCPFastOpenListenOverflow */
++	LINUX_MIB_TCPFASTOPENCOOKIEREQD,	/* TCPFastOpenCookieReqd */
++	LINUX_MIB_TCPSPURIOUS_RTX_HOSTQUEUES, /* TCPSpuriousRtxHostQueues */
++	LINUX_MIB_BUSYPOLLRXPACKETS,		/* BusyPollRxPackets */
+ 	__LINUX_MIB_MAX
+ };
+ 
+@@ -264,6 +291,8 @@ enum
+ 	LINUX_MIB_XFRMOUTPOLDEAD,		/* XfrmOutPolDead */
+ 	LINUX_MIB_XFRMOUTPOLERROR,		/* XfrmOutPolError */
+ 	LINUX_MIB_XFRMFWDHDRERROR,		/* XfrmFwdHdrError*/
++	LINUX_MIB_XFRMOUTSTATEINVALID,		/* XfrmOutStateInvalid */
++	LINUX_MIB_XFRMACQUIREERROR,		/* XfrmAcquireError */
+ 	__LINUX_MIB_XFRMMAX
+ };
+ 
+diff --git a/include/netlink/route/link.h b/include/netlink/route/link.h
+index dbde72f..2d061be 100644
+--- a/include/netlink/route/link.h
++++ b/include/netlink/route/link.h
+@@ -92,6 +92,12 @@ typedef enum {
+ 	RTNL_LINK_ICMP6_INERRORS,	/*!< ICMPv6 SNMP InErrors */
+ 	RTNL_LINK_ICMP6_OUTMSGS,	/*!< ICMPv6 SNMP OutMsgs */
+ 	RTNL_LINK_ICMP6_OUTERRORS,	/*!< ICMPv6 SNMP OutErrors */
++	RTNL_LINK_ICMP6_CSUMERRORS,	/*!< ICMPv6 SNMP InCsumErrors */
++	RTNL_LINK_IP6_CSUMERRORS,	/*!< IPv6 SNMP InCsumErrors */
++	RTNL_LINK_IP6_NOECTPKTS,	/*!< IPv6 SNMP InNoECTPkts */
++	RTNL_LINK_IP6_ECT1PKTS,		/*!< IPv6 SNMP InECT1Pkts */
++	RTNL_LINK_IP6_ECT0PKTS,		/*!< IPv6 SNMP InECT0Pkts */
++	RTNL_LINK_IP6_CEPKTS,		/*!< IPv6 SNMP InCEPkts */
+ 	__RTNL_LINK_STATS_MAX,
+ } rtnl_link_stat_id_t;
+ 
+diff --git a/lib/route/link.c b/lib/route/link.c
+index 3171513..8fe3376 100644
+--- a/lib/route/link.c
++++ b/lib/route/link.c
+@@ -2470,6 +2470,12 @@ static const struct trans_tbl link_stats[] = {
+ 	__ADD(RTNL_LINK_ICMP6_INERRORS, ICMP6_InErrors)
+ 	__ADD(RTNL_LINK_ICMP6_OUTMSGS, ICMP6_OutMsgs)
+ 	__ADD(RTNL_LINK_ICMP6_OUTERRORS, ICMP6_OutErrors)
++	__ADD(RTNL_LINK_ICMP6_CSUMERRORS, ICMP6_InCsumErrors)
++	__ADD(RTNL_LINK_IP6_CSUMERRORS, Ip6_InCsumErrors)
++	__ADD(RTNL_LINK_IP6_NOECTPKTS, Ip6_InNoECTPkts)
++	__ADD(RTNL_LINK_IP6_ECT1PKTS, Ip6_InECT1Pkts)
++	__ADD(RTNL_LINK_IP6_ECT0PKTS, Ip6_InECT0Pkts)
++	__ADD(RTNL_LINK_IP6_CEPKTS, Ip6_InCEPkts)
+ };
+ 
+ char *rtnl_link_stat2str(int st, char *buf, size_t len)
+diff --git a/lib/route/link/inet6.c b/lib/route/link/inet6.c
+index f171fed..6fa2741 100644
+--- a/lib/route/link/inet6.c
++++ b/lib/route/link/inet6.c
+@@ -50,6 +50,84 @@ static struct nla_policy inet6_policy[IFLA_INET6_MAX+1] = {
+ 	[IFLA_INET6_ICMP6STATS]	= { .minlen = 8 },
+ };
+ 
++static const uint8_t map_stat_id_from_IPSTATS_MIB_v1[__IPSTATS_MIB_MAX] = {
++	/* 14a196807482e6fc74f15fc03176d5c08880588f^:include/linux/snmp.h
++	 * version before the API change in commit 14a196807482e6fc74f15fc03176d5c08880588f.
++	 * This version was valid since commit edf391ff17232f097d72441c9ad467bcb3b5db18, which
++	 * predates support for parsing IFLA_PROTINFO in libnl3. Such an even older meaning of
++	 * the flags is not supported in libnl3. */
++	[ 1] = RTNL_LINK_IP6_INPKTS,                    /* IPSTATS_MIB_INPKTS                   */
++	[ 2] = RTNL_LINK_IP6_INHDRERRORS,               /* IPSTATS_MIB_INHDRERRORS              */
++	[ 3] = RTNL_LINK_IP6_INTOOBIGERRORS,            /* IPSTATS_MIB_INTOOBIGERRORS           */
++	[ 4] = RTNL_LINK_IP6_INNOROUTES,                /* IPSTATS_MIB_INNOROUTES               */
++	[ 5] = RTNL_LINK_IP6_INADDRERRORS,              /* IPSTATS_MIB_INADDRERRORS             */
++	[ 6] = RTNL_LINK_IP6_INUNKNOWNPROTOS,           /* IPSTATS_MIB_INUNKNOWNPROTOS          */
++	[ 7] = RTNL_LINK_IP6_INTRUNCATEDPKTS,           /* IPSTATS_MIB_INTRUNCATEDPKTS          */
++	[ 8] = RTNL_LINK_IP6_INDISCARDS,                /* IPSTATS_MIB_INDISCARDS               */
++	[ 9] = RTNL_LINK_IP6_INDELIVERS,                /* IPSTATS_MIB_INDELIVERS               */
++	[10] = RTNL_LINK_IP6_OUTFORWDATAGRAMS,          /* IPSTATS_MIB_OUTFORWDATAGRAMS         */
++	[11] = RTNL_LINK_IP6_OUTPKTS,                   /* IPSTATS_MIB_OUTPKTS                  */
++	[12] = RTNL_LINK_IP6_OUTDISCARDS,               /* IPSTATS_MIB_OUTDISCARDS              */
++	[13] = RTNL_LINK_IP6_OUTNOROUTES,               /* IPSTATS_MIB_OUTNOROUTES              */
++	[14] = RTNL_LINK_IP6_REASMTIMEOUT,              /* IPSTATS_MIB_REASMTIMEOUT             */
++	[15] = RTNL_LINK_IP6_REASMREQDS,                /* IPSTATS_MIB_REASMREQDS               */
++	[16] = RTNL_LINK_IP6_REASMOKS,                  /* IPSTATS_MIB_REASMOKS                 */
++	[17] = RTNL_LINK_IP6_REASMFAILS,                /* IPSTATS_MIB_REASMFAILS               */
++	[18] = RTNL_LINK_IP6_FRAGOKS,                   /* IPSTATS_MIB_FRAGOKS                  */
++	[19] = RTNL_LINK_IP6_FRAGFAILS,                 /* IPSTATS_MIB_FRAGFAILS                */
++	[20] = RTNL_LINK_IP6_FRAGCREATES,               /* IPSTATS_MIB_FRAGCREATES              */
++	[21] = RTNL_LINK_IP6_INMCASTPKTS,               /* IPSTATS_MIB_INMCASTPKTS              */
++	[22] = RTNL_LINK_IP6_OUTMCASTPKTS,              /* IPSTATS_MIB_OUTMCASTPKTS             */
++	[23] = RTNL_LINK_IP6_INBCASTPKTS,               /* IPSTATS_MIB_INBCASTPKTS              */
++	[24] = RTNL_LINK_IP6_OUTBCASTPKTS,              /* IPSTATS_MIB_OUTBCASTPKTS             */
++	[25] = RTNL_LINK_IP6_INOCTETS,                  /* IPSTATS_MIB_INOCTETS                 */
++	[26] = RTNL_LINK_IP6_OUTOCTETS,                 /* IPSTATS_MIB_OUTOCTETS                */
++	[27] = RTNL_LINK_IP6_INMCASTOCTETS,             /* IPSTATS_MIB_INMCASTOCTETS            */
++	[28] = RTNL_LINK_IP6_OUTMCASTOCTETS,            /* IPSTATS_MIB_OUTMCASTOCTETS           */
++	[29] = RTNL_LINK_IP6_INBCASTOCTETS,             /* IPSTATS_MIB_INBCASTOCTETS            */
++	[30] = RTNL_LINK_IP6_OUTBCASTOCTETS,            /* IPSTATS_MIB_OUTBCASTOCTETS           */
++};
++
++static const uint8_t map_stat_id_from_IPSTATS_MIB_v2[__IPSTATS_MIB_MAX] = {
++	/* d8ec26d7f8287f5788a494f56e8814210f0e64be:include/uapi/linux/snmp.h
++	 * version since the API change in commit 14a196807482e6fc74f15fc03176d5c08880588f */
++	[ 1] = RTNL_LINK_IP6_INPKTS,                    /* IPSTATS_MIB_INPKTS                   */
++	[ 2] = RTNL_LINK_IP6_INOCTETS,                  /* IPSTATS_MIB_INOCTETS                 */
++	[ 3] = RTNL_LINK_IP6_INDELIVERS,                /* IPSTATS_MIB_INDELIVERS               */
++	[ 4] = RTNL_LINK_IP6_OUTFORWDATAGRAMS,          /* IPSTATS_MIB_OUTFORWDATAGRAMS         */
++	[ 5] = RTNL_LINK_IP6_OUTPKTS,                   /* IPSTATS_MIB_OUTPKTS                  */
++	[ 6] = RTNL_LINK_IP6_OUTOCTETS,                 /* IPSTATS_MIB_OUTOCTETS                */
++	[ 7] = RTNL_LINK_IP6_INHDRERRORS,               /* IPSTATS_MIB_INHDRERRORS              */
++	[ 8] = RTNL_LINK_IP6_INTOOBIGERRORS,            /* IPSTATS_MIB_INTOOBIGERRORS           */
++	[ 9] = RTNL_LINK_IP6_INNOROUTES,                /* IPSTATS_MIB_INNOROUTES               */
++	[10] = RTNL_LINK_IP6_INADDRERRORS,              /* IPSTATS_MIB_INADDRERRORS             */
++	[11] = RTNL_LINK_IP6_INUNKNOWNPROTOS,           /* IPSTATS_MIB_INUNKNOWNPROTOS          */
++	[12] = RTNL_LINK_IP6_INTRUNCATEDPKTS,           /* IPSTATS_MIB_INTRUNCATEDPKTS          */
++	[13] = RTNL_LINK_IP6_INDISCARDS,                /* IPSTATS_MIB_INDISCARDS               */
++	[14] = RTNL_LINK_IP6_OUTDISCARDS,               /* IPSTATS_MIB_OUTDISCARDS              */
++	[15] = RTNL_LINK_IP6_OUTNOROUTES,               /* IPSTATS_MIB_OUTNOROUTES              */
++	[16] = RTNL_LINK_IP6_REASMTIMEOUT,              /* IPSTATS_MIB_REASMTIMEOUT             */
++	[17] = RTNL_LINK_IP6_REASMREQDS,                /* IPSTATS_MIB_REASMREQDS               */
++	[18] = RTNL_LINK_IP6_REASMOKS,                  /* IPSTATS_MIB_REASMOKS                 */
++	[19] = RTNL_LINK_IP6_REASMFAILS,                /* IPSTATS_MIB_REASMFAILS               */
++	[20] = RTNL_LINK_IP6_FRAGOKS,                   /* IPSTATS_MIB_FRAGOKS                  */
++	[21] = RTNL_LINK_IP6_FRAGFAILS,                 /* IPSTATS_MIB_FRAGFAILS                */
++	[22] = RTNL_LINK_IP6_FRAGCREATES,               /* IPSTATS_MIB_FRAGCREATES              */
++	[23] = RTNL_LINK_IP6_INMCASTPKTS,               /* IPSTATS_MIB_INMCASTPKTS              */
++	[24] = RTNL_LINK_IP6_OUTMCASTPKTS,              /* IPSTATS_MIB_OUTMCASTPKTS             */
++	[25] = RTNL_LINK_IP6_INBCASTPKTS,               /* IPSTATS_MIB_INBCASTPKTS              */
++	[26] = RTNL_LINK_IP6_OUTBCASTPKTS,              /* IPSTATS_MIB_OUTBCASTPKTS             */
++	[27] = RTNL_LINK_IP6_INMCASTOCTETS,             /* IPSTATS_MIB_INMCASTOCTETS            */
++	[28] = RTNL_LINK_IP6_OUTMCASTOCTETS,            /* IPSTATS_MIB_OUTMCASTOCTETS           */
++	[29] = RTNL_LINK_IP6_INBCASTOCTETS,             /* IPSTATS_MIB_INBCASTOCTETS            */
++	[30] = RTNL_LINK_IP6_OUTBCASTOCTETS,            /* IPSTATS_MIB_OUTBCASTOCTETS           */
++	[31] = RTNL_LINK_IP6_CSUMERRORS,                /* IPSTATS_MIB_CSUMERRORS               */
++	[32] = RTNL_LINK_IP6_NOECTPKTS,                 /* IPSTATS_MIB_NOECTPKTS                */
++	[33] = RTNL_LINK_IP6_ECT1PKTS,                  /* IPSTATS_MIB_ECT1PKTS                 */
++	[34] = RTNL_LINK_IP6_ECT0PKTS,                  /* IPSTATS_MIB_ECT0PKTS                 */
++	[35] = RTNL_LINK_IP6_CEPKTS,                    /* IPSTATS_MIB_CEPKTS                   */
++};
++
+ static int inet6_parse_protinfo(struct rtnl_link *link, struct nlattr *attr,
+ 				void *data)
+ {
+@@ -86,12 +164,23 @@ static int inet6_parse_protinfo(struct rtnl_link *link, struct nlattr *attr,
+ 		unsigned char *cnt = nla_data(tb[IFLA_INET6_STATS]);
+ 		uint64_t stat;
+ 		int i;
+-		int len = min_t(int, __IPSTATS_MIB_MAX, nla_len(tb[IFLA_INET6_STATS]) / 8);
++		int len = nla_len(tb[IFLA_INET6_STATS]) / 8;
++		const uint8_t *map_stat_id = map_stat_id_from_IPSTATS_MIB_v2;
++
++		if (len < 32 ||
++		    (tb[IFLA_INET6_ICMP6STATS] && nla_len(tb[IFLA_INET6_ICMP6STATS]) < 6)) {
++			/* kernel commit 14a196807482e6fc74f15fc03176d5c08880588f reordered the values.
++			 * The later commit 6a5dc9e598fe90160fee7de098fa319665f5253e added values
++			 * IPSTATS_MIB_CSUMERRORS/ICMP6_MIB_CSUMERRORS. If the netlink is shorter
++			 * then this, assume that the kernel uses the previous meaning of the
++			 * enumeration. */
++			map_stat_id = map_stat_id_from_IPSTATS_MIB_v1;
++		}
+ 
++		len = min_t(int, __IPSTATS_MIB_MAX, len);
+ 		for (i = 1; i < len; i++) {
+ 			memcpy(&stat, &cnt[i * sizeof(stat)], sizeof(stat));
+-			rtnl_link_set_stat(link, RTNL_LINK_IP6_INPKTS + i - 1,
+-					   stat);
++			rtnl_link_set_stat(link, map_stat_id[i], stat);
+ 		}
+ 	}
+ 
+@@ -343,19 +432,29 @@ static void inet6_dump_stats(struct rtnl_link *link,
+ 		link->l_stats[RTNL_LINK_IP6_INADDRERRORS]);
+ 
+ 	nl_dump(p, "       InUnknownProtos     InTruncatedPkts   "
+-		   "    OutNoRoutes\n");
+-	nl_dump(p, "    %18" PRIu64 " %18" PRIu64 " %18" PRIu64 "\n",
++		   "    OutNoRoutes       InCsumErrors\n");
++	nl_dump(p, "    %18" PRIu64 " %18" PRIu64 " %18" PRIu64 " %18" PRIu64 "\n",
+ 		link->l_stats[RTNL_LINK_IP6_INUNKNOWNPROTOS],
+ 		link->l_stats[RTNL_LINK_IP6_INTRUNCATEDPKTS],
+-		link->l_stats[RTNL_LINK_IP6_OUTNOROUTES]);
++		link->l_stats[RTNL_LINK_IP6_OUTNOROUTES],
++		link->l_stats[RTNL_LINK_IP6_CSUMERRORS]);
+ 
+-	nl_dump(p, "    ICMPv6:     InMsgs           InErrors        "
+-		   "    OutMsgs          OutErrors\n");
++	nl_dump(p, "           InNoECTPkts          InECT1Pkts   "
++		   "     InECT0Pkts           InCEPkts\n");
+ 	nl_dump(p, "    %18" PRIu64 " %18" PRIu64 " %18" PRIu64 " %18" PRIu64 "\n",
++		link->l_stats[RTNL_LINK_IP6_NOECTPKTS],
++		link->l_stats[RTNL_LINK_IP6_ECT1PKTS],
++		link->l_stats[RTNL_LINK_IP6_ECT0PKTS],
++		link->l_stats[RTNL_LINK_IP6_CEPKTS]);
++
++	nl_dump(p, "    ICMPv6:     InMsgs           InErrors        "
++		   "    OutMsgs          OutErrors       InCsumErrors\n");
++	nl_dump(p, "    %18" PRIu64 " %18" PRIu64 " %18" PRIu64 " %18" PRIu64 " %18" PRIu64 "\n",
+ 		link->l_stats[RTNL_LINK_ICMP6_INMSGS],
+ 		link->l_stats[RTNL_LINK_ICMP6_INERRORS],
+ 		link->l_stats[RTNL_LINK_ICMP6_OUTMSGS],
+-		link->l_stats[RTNL_LINK_ICMP6_OUTERRORS]);
++		link->l_stats[RTNL_LINK_ICMP6_OUTERRORS],
++		link->l_stats[RTNL_LINK_ICMP6_CSUMERRORS]);
+ }
+ 
+ static const struct nla_policy protinfo_policy = {
+-- 
+1.8.5.3
+

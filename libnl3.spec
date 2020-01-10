@@ -1,6 +1,6 @@
 Name: libnl3
 Version: 3.2.28
-Release: 2%{?dist}
+Release: 3%{?dist}
 Summary: Convenience library for kernel netlink sockets
 Group: Development/Libraries
 License: LGPLv2
@@ -12,6 +12,7 @@ Source: http://www.infradead.org/~tgr/libnl/files/libnl-%{fullversion}.tar.gz
 Source1: http://www.infradead.org/~tgr/libnl/files/libnl-doc-%{fullversion}.tar.gz
 
 Patch1: 0001-compare-v4-addr-rh1370503.patch
+Patch2: 0002-msg-peek-by-default-rh1396882.patch
 
 BuildRequires: flex bison
 BuildRequires: python
@@ -52,6 +53,7 @@ This package contains libnl3 API documentation
 %prep
 %setup -q -n libnl-%{fullversion}
 %patch1 -p1
+%patch2 -p1
 
 tar -xzf %SOURCE1
 
@@ -123,6 +125,9 @@ make check
 %doc libnl-doc-%{fullversion}/api/*
 
 %changelog
+* Mon Jan  9 2017 Thomas Haller <thaller@redhat.com> - 3.2.28-3
+- lib: use MSG_PEEK by default for nl_msgrecvs() (rh#1396882)
+
 * Fri Aug 26 2016 Thomas Haller <thaller@redhat.com> - 3.2.28-2
 - route: fix nl_object_identical() comparing AF_INET addresses (rh #1370503)
 

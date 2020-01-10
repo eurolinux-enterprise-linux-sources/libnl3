@@ -3,7 +3,7 @@ Group: Development/Libraries
 License: LGPLv2
 Name: libnl3
 Version: 3.2.21
-Release: 10%{?dist}
+Release: 9%{?dist}
 URL: http://www.infradead.org/~tgr/libnl/
 Source: http://www.infradead.org/~tgr/libnl/files/libnl-%{version}.tar.gz
 Source1: http://www.infradead.org/~tgr/libnl/files/libnl-doc-%{version}.tar.gz
@@ -24,8 +24,6 @@ Patch7: 0007-relax-parsing-protinfo.patch
 Patch8: 0008-rh1127718-inet6_addr_gen.patch
 Patch9: 0009-rh1181255-EAGAIN.patch
 Patch10: 0010-rh1249158-local-port-EADDRINUSE.patch
-Patch11: 0011-support-IFLA_LINK_NETNSID-rh1255050.patch
-Patch12: 0012-rh1261028-rtnl-neigh-get.patch
 
 %description
 This package contains a convenience library to simplify
@@ -71,9 +69,7 @@ This package contains libnl3 API documentation
 %patch7 -p1 -b .0007-relax-parsing-protinfo.orig
 %patch8 -p1 -b .0008-rh1127718-inet6_addr_gen.orig
 %patch9 -p1 -b .0009-rh1181255-EAGAIN.orig
-%patch10 -p1 -b .0010-rh1249158-local-port-EADDRINUSE.orig
-%patch11 -p1
-%patch12 -p1
+%patch10 -p1
 
 tar -xzf %SOURCE1
 
@@ -127,12 +123,12 @@ find $RPM_BUILD_ROOT -name \*.la -delete
 %doc libnl-doc-%{version}/api/*
 
 %changelog
-* Wed Sep 30 2015 Thomas Haller <thaller@redhat.com> - 3.2.21-10
-- rtnl: fix lookup in rtnl_neigh_get() to ignore address family (rh #1261028)
+* Wed Nov 04 2015 Scientific Linux Auto Patch Process <SCIENTIFIC-LINUX-DEVEL@LISTSERV.FNAL.GOV>
+- Eliminated rpmbuild "bogus date" error due to inconsistent weekday,
+  by assuming the date is correct and changing the weekday.
 
-* Mon Aug 24 2015 Thomas Haller <thaller@redhat.com> - 3.2.21-9
-- improve local port handling for netlink socket with EADDRINUSE (rh #1249158)
-- rtnl: backport support for link-netnsid attribute (rh #1255050)
+* Mon Oct  5 2015 Thomas Haller <thaller@redhat.com> - 3.2.21-9
+- improve local port handling for netlink socket with EADDRINUSE (rh #1268767)
 
 * Mon Jan 12 2015 Lubomir Rintel <lrintel@redhat.com> - 3.2.21-8
 - properly propagate EAGAIN error status (rh #1181255)

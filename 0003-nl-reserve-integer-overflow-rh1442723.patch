@@ -1,0 +1,86 @@
+From 4c39012783e0e376603138dddae9cd876bdd01ce Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Mon, 6 Feb 2017 22:23:52 +0100
+Subject: [PATCH 1/2] lib: check for integer-overflow in nlmsg_reserve()
+
+In general, libnl functions are not robust against calling with
+invalid arguments. Thus, never call libnl functions with invalid
+arguments. In case of nlmsg_reserve() this means never provide
+a @len argument that causes overflow.
+
+Still, add an additional safeguard to avoid exploiting such bugs.
+
+Assume that @pad is a trusted, small integer.
+Assume that n->nm_size is a valid number of allocated bytes (and thus
+much smaller then SIZE_T_MAX).
+Assume, that @len may be set to an untrusted value. Then the patch
+avoids an integer overflow resulting in reserving too few bytes.
+
+(cherry picked from commit 3e18948f17148e6a3c4255bdeaaf01ef6081ceeb)
+---
+ lib/msg.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/lib/msg.c b/lib/msg.c
+index e8a7e99..f30fd2d 100644
+--- a/lib/msg.c
++++ b/lib/msg.c
+@@ -410,6 +410,9 @@ void *nlmsg_reserve(struct nl_msg *n, size_t len, int pad)
+ 	size_t nlmsg_len = n->nm_nlh->nlmsg_len;
+ 	size_t tlen;
+ 
++	if (len > n->nm_size)
++		return NULL;
++
+ 	tlen = pad ? ((len + (pad - 1)) & ~(pad - 1)) : len;
+ 
+ 	if ((tlen + nlmsg_len) > n->nm_size)
+-- 
+2.9.3
+
+
+From 1b347b7e5892eac5ea71090b8ec6c08756b0dcd4 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 18 Jan 2017 11:59:23 +0100
+Subject: [PATCH 2/2] lib/attr.c: check for valid length argument in
+ nla_reserve()
+
+https://github.com/thom311/libnl/issues/124
+(cherry picked from commit c473d59f972c35c5a7363d52ee6ee1e0792de0f8)
+---
+ lib/attr.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/lib/attr.c b/lib/attr.c
+index a3d1b16..0dca3ec 100644
+--- a/lib/attr.c
++++ b/lib/attr.c
+@@ -457,7 +457,10 @@ struct nlattr *nla_reserve(struct nl_msg *msg, int attrtype, int attrlen)
+ {
+ 	struct nlattr *nla;
+ 	int tlen;
+-	
++
++	if (attrlen < 0)
++		return NULL;
++
+ 	tlen = NLMSG_ALIGN(msg->nm_nlh->nlmsg_len) + nla_total_size(attrlen);
+ 
+ 	if (tlen > msg->nm_size)
+@@ -499,8 +502,12 @@ int nla_put(struct nl_msg *msg, int attrtype, int datalen, const void *data)
+ 	struct nlattr *nla;
+ 
+ 	nla = nla_reserve(msg, attrtype, datalen);
+-	if (!nla)
++	if (!nla) {
++		if (datalen < 0)
++			return -NLE_INVAL;
++
+ 		return -NLE_NOMEM;
++	}
+ 
+ 	if (datalen > 0) {
+ 		memcpy(nla_data(nla), data, datalen);
+-- 
+2.9.3
+

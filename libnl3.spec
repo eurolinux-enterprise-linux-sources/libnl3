@@ -1,6 +1,6 @@
 Name: libnl3
 Version: 3.2.28
-Release: 3%{?dist}
+Release: 4%{?dist}
 Summary: Convenience library for kernel netlink sockets
 Group: Development/Libraries
 License: LGPLv2
@@ -13,6 +13,7 @@ Source1: http://www.infradead.org/~tgr/libnl/files/libnl-doc-%{fullversion}.tar.
 
 Patch1: 0001-compare-v4-addr-rh1370503.patch
 Patch2: 0002-msg-peek-by-default-rh1396882.patch
+Patch3: 0003-nl-reserve-integer-overflow-rh1442723.patch
 
 BuildRequires: flex bison
 BuildRequires: python
@@ -54,6 +55,7 @@ This package contains libnl3 API documentation
 %setup -q -n libnl-%{fullversion}
 %patch1 -p1
 %patch2 -p1
+%patch3 -p1
 
 tar -xzf %SOURCE1
 
@@ -125,6 +127,9 @@ make check
 %doc libnl-doc-%{fullversion}/api/*
 
 %changelog
+* Tue Apr 18 2017 Thomas Haller <thaller@redhat.com> - 3.2.28-4
+* lib: check for integer overflow in nl_reserve() (rh#1440788, rh#1442723)
+
 * Mon Jan  9 2017 Thomas Haller <thaller@redhat.com> - 3.2.28-3
 - lib: use MSG_PEEK by default for nl_msgrecvs() (rh#1396882)
 

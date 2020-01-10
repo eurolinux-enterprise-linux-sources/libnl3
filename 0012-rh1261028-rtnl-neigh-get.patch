@@ -1,0 +1,112 @@
+From 53d819c68d21accc815b59d887075b6e47e4c07f Mon Sep 17 00:00:00 2001
+From: Thomas Graf <tgraf@suug.ch>
+Date: Fri, 1 Feb 2013 10:41:45 +0100
+Subject: [PATCH 1/2] neigh: Remove check for AF_UNSPEC in rtnl_neigh_get()
+
+This check was introduces to not accidently return AF_BRIDGE objects
+to unaware API users as they do differ in structure. However, such
+objects are only available if explicitely requests using the
+NL_CACHE_AF_ITER flag or by using arg1 == AF_BRIDGE for the cache.
+
+Therefore remove this check and allow rtnl_neigh_get() to be used to
+fetch any neighbor object of a cache.
+
+Reported-by: Maxime Bizon <mbizon@freebox.fr>
+Signed-off-by: Thomas Graf <tgraf@suug.ch>
+(cherry picked from commit 8571f58f23763d8db7365d02c9b27832ad3d7005)
+---
+ lib/route/neigh.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lib/route/neigh.c b/lib/route/neigh.c
+index c0f80a2..288bb85 100644
+--- a/lib/route/neigh.c
++++ b/lib/route/neigh.c
+@@ -532,6 +532,7 @@ int rtnl_neigh_alloc_cache(struct nl_sock *sock, struct nl_cache **result)
+  * @arg cache		neighbour cache
+  * @arg ifindex		interface index the neighbour is on
+  * @arg dst		destination address of the neighbour
++ *
+  * @return neighbour handle or NULL if no match was found.
+  */
+ struct rtnl_neigh * rtnl_neigh_get(struct nl_cache *cache, int ifindex,
+@@ -540,8 +541,7 @@ struct rtnl_neigh * rtnl_neigh_get(struct nl_cache *cache, int ifindex,
+ 	struct rtnl_neigh *neigh;
+ 
+ 	nl_list_for_each_entry(neigh, &cache->c_items, ce_list) {
+-		if (neigh->n_family == AF_UNSPEC &&
+-		    neigh->n_ifindex == ifindex &&
++		if (neigh->n_ifindex == ifindex &&
+ 		    !nl_addr_cmp(neigh->n_dst, dst)) {
+ 			nl_object_get((struct nl_object *) neigh);
+ 			return neigh;
+-- 
+2.4.3
+
+
+From 6212b5522f5b40110729cd3fe4ac9c3dcaa2eb88 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Tue, 29 Sep 2015 18:32:23 +0200
+Subject: [PATCH 2/2] route: add capability indicating the behavior of
+ rtnl_neigh_get()
+
+A wrong behavior for rtnl_neigh_get() was introduced between 3.2.14 and 3.2.15
+(commit 64fcb47a36ec12d7e7f00605f6a8952ce985dd08).
+
+It was later fixed between 3.2.21 and 3.2.22
+(commit 8571f58f23763d8db7365d02c9b27832ad3d7005).
+
+Add a capability NL_CAPABILITY_RTNL_NEIGH_GET_FILTER_AF_UNSPEC_FIX
+to indicate that this buggy behavior was fixed.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=1261028
+http://lists.infradead.org/pipermail/libnl/2015-August/001951.html
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 2a8a7c31e6accf1a22caebace8da4c03028d5500)
+---
+ include/netlink/utils.h | 8 ++++++++
+ lib/utils.c             | 9 +++++++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/include/netlink/utils.h b/include/netlink/utils.h
+index 5b0d275..4b15372 100644
+--- a/include/netlink/utils.h
++++ b/include/netlink/utils.h
+@@ -99,6 +99,14 @@ enum {
+ 	NL_CAPABILITY_NL_CONNECT_RETRY_GENERATE_PORT_ON_ADDRINUSE = 4,
+ #define NL_CAPABILITY_NL_CONNECT_RETRY_GENERATE_PORT_ON_ADDRINUSE NL_CAPABILITY_NL_CONNECT_RETRY_GENERATE_PORT_ON_ADDRINUSE
+ 
++	/**
++	 * Between 3.2.14 (64fcb47a36ec12d7e7f00605f6a8952ce985dd08) and 3.2.22 (8571f58f23763d8db7365d02c9b27832ad3d7005),
++	 * rtnl_neigh_get() behaved differently and only returned objects with family AF_UNSPEC.
++	 * This capability indicates, that the function was fixed. The absense of the capability,
++	 * doesn't indicate however which behavior the function will have. So beware. */
++	NL_CAPABILITY_RTNL_NEIGH_GET_FILTER_AF_UNSPEC_FIX = 10,
++#define NL_CAPABILITY_RTNL_NEIGH_GET_FILTER_AF_UNSPEC_FIX NL_CAPABILITY_RTNL_NEIGH_GET_FILTER_AF_UNSPEC_FIX
++
+ 	__NL_CAPABILITY_MAX
+ #define NL_CAPABILITY_MAX                               (__NL_CAPABILITY_MAX - 1)
+ };
+diff --git a/lib/utils.c b/lib/utils.c
+index 5149e07..6b6a87c 100644
+--- a/lib/utils.c
++++ b/lib/utils.c
+@@ -1143,6 +1143,15 @@ int nl_has_capability (int capability)
+ 			0,
+ 			0,
+ 			0),
++		_NL_SET(1,
++			0,
++			NL_CAPABILITY_RTNL_NEIGH_GET_FILTER_AF_UNSPEC_FIX,
++			0,
++			0,
++			0,
++			0,
++			0,
++			0),
+ #undef _NL_SET
+ #undef _NL_SETV
+ #undef _NL_ASSERT
+-- 
+2.4.3
+

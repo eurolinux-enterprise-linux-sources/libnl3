@@ -1,0 +1,35 @@
+From 375a6294a41e003f873821a01d947f0ecfaf76d4 Mon Sep 17 00:00:00 2001
+From: Thomas Graf <tgraf@suug.ch>
+Date: Tue, 2 Apr 2013 11:58:18 +0200
+Subject: [PATCH] nl: Return -NLE_AGAIN if non-blocking socket would block
+
+Previously 0 was returned which gave the caller no chance of detecting
+when a non-blocking socket would block. If a caller intends to never
+see an error message it should utilize poll()/select() to only read
+when the socket has pending data or information.
+
+Reported-by: Holger Eitzenberger <holger@eitzenberger.org>
+Signed-off-by: Thomas Graf <tgraf@suug.ch>
+---
+ lib/nl.c | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/lib/nl.c b/lib/nl.c
+index fa43c56..0445e35 100644
+--- a/lib/nl.c
++++ b/lib/nl.c
+@@ -627,11 +627,6 @@ retry:
+ 			NL_DBG(3, "recvmsg() returned EINTR, retrying\n");
+ 			goto retry;
+ 		}
+-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+-			NL_DBG(3, "recvmsg() returned EAGAIN||EWOULDBLOCK, aborting\n");
+-			retval = 0;
+-			goto abort;
+-		}
+ 		retval = -nl_syserr2nlerr(errno);
+ 		goto abort;
+ 	}
+-- 
+2.1.0
+

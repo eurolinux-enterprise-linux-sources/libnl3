@@ -1,0 +1,1176 @@
+From 2b7b4ae45f5171231b562ba51be256d1e2c40401 Mon Sep 17 00:00:00 2001
+From: Thomas Graf <tgraf@suug.ch>
+Date: Mon, 31 Mar 2014 13:21:06 +0200
+Subject: [PATCH 01/11] link: Catch missing io_free() implementations
+
+Signed-off-by: Thomas Graf <tgraf@suug.ch>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 34bfce62150d07cf9894f2d9cbd0c989a203ea52)
+---
+ include/netlink-private/netlink.h | 7 +++++++
+ lib/route/link.c                  | 4 ++++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/include/netlink-private/netlink.h b/include/netlink-private/netlink.h
+index 6ae6d17..83eefad 100644
+--- a/include/netlink-private/netlink.h
++++ b/include/netlink-private/netlink.h
+@@ -95,6 +95,13 @@ struct trans_list {
+ 		assert(0);						\
+ 	} while (0)
+ 
++#define BUG_ON(condition)						\
++	do {								\
++		if (condition)						\
++			BUG();						\
++	} while (0)
++
++
+ #define APPBUG(msg)							\
+ 	do {								\
+ 		NL_DBG(1, "APPLICATION BUG: %s:%d:%s: %s\n",		\
+diff --git a/lib/route/link.c b/lib/route/link.c
+index 8fe3376..1f27247 100644
+--- a/lib/route/link.c
++++ b/lib/route/link.c
+@@ -184,6 +184,10 @@ static void release_link_info(struct rtnl_link *link)
+ 	if (io != NULL) {
+ 		if (io->io_free)
+ 			io->io_free(link);
++		else {
++			/* Catch missing io_free() implementations */
++			BUG_ON(link->l_info);
++		}
+ 		rtnl_link_info_ops_put(io);
+ 		link->l_info_ops = NULL;
+ 	}
+-- 
+2.4.3
+
+
+From 369857fcf8d6c2783be8c1d225ad192363245098 Mon Sep 17 00:00:00 2001
+From: Thomas Graf <tgraf@suug.ch>
+Date: Fri, 28 Jun 2013 18:53:16 +0200
+Subject: [PATCH 02/11] socket: Warn via debug message if local port namespace
+ is exhausted
+
+Signed-off-by: Thomas Graf <tgraf@suug.ch>
+(cherry picked from commit 2d0810eb93704defb2375d9861892d6041da4623)
+---
+ lib/socket.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/lib/socket.c b/lib/socket.c
+index d3e636e..f3171f5 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -89,6 +89,7 @@ static uint32_t generate_local_port(void)
+ 	nl_write_unlock(&port_map_lock);
+ 
+ 	/* Out of sockets in our own PID namespace, what to do? FIXME */
++	NL_DBG(1, "Warning: Ran out of unique local port namespace\n");
+ 	return UINT_MAX;
+ }
+ 
+-- 
+2.4.3
+
+
+From bba9ce1426728f00eccc5aa97d6d6c954d383481 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 9 Apr 2014 12:08:50 +0200
+Subject: [PATCH 03/11] lib/socket: use proper typed constant UINT32_MAX for
+ uint32_t typed port
+
+This was a bug on architectures with native int type less then 32 bit.
+
+Acked-by: Thomas Graf <tgraf@suug.ch>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 0fd510b3673f479637a6376db3d66dcb9f8911d0)
+---
+ lib/socket.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/lib/socket.c b/lib/socket.c
+index f3171f5..fa12e25 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -82,7 +82,7 @@ static uint32_t generate_local_port(void)
+ 
+ 			nl_write_unlock(&port_map_lock);
+ 
+-			return pid + (n << 22);
++			return pid + (((uint32_t)n) << 22);
+ 		}
+ 	}
+ 
+@@ -90,14 +90,14 @@ static uint32_t generate_local_port(void)
+ 
+ 	/* Out of sockets in our own PID namespace, what to do? FIXME */
+ 	NL_DBG(1, "Warning: Ran out of unique local port namespace\n");
+-	return UINT_MAX;
++	return UINT32_MAX;
+ }
+ 
+ static void release_local_port(uint32_t port)
+ {
+ 	int nr;
+ 
+-	if (port == UINT_MAX)
++	if (port == UINT32_MAX)
+ 		return;
+ 	
+ 	nr = port >> 22;
+@@ -126,7 +126,7 @@ static struct nl_sock *__alloc_socket(struct nl_cb *cb)
+ 	sk->s_peer.nl_family = AF_NETLINK;
+ 	sk->s_seq_expect = sk->s_seq_next = time(0);
+ 	sk->s_local.nl_pid = generate_local_port();
+-	if (sk->s_local.nl_pid == UINT_MAX) {
++	if (sk->s_local.nl_pid == UINT32_MAX) {
+ 		nl_socket_free(sk);
+ 		return NULL;
+ 	}
+-- 
+2.4.3
+
+
+From b4c09ead0b289a74d86dd47fbf1081daafcd4826 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 9 Apr 2014 12:08:51 +0200
+Subject: [PATCH 04/11] lib/socket: don't fail if no more local ports can be
+ assigned in nl_socket_alloc
+
+By failing inside of nl_socket_alloc(), the user can not even work around
+when running out of local ports. This patch changes that if there are no more
+local ports, we set the port to UINT32_MAX. This is a consistent behavior
+to calling nl_socket_set_local_port(sk, 0).
+
+In general, since nl_socket_set_local_port() does not restict the generated
+ports in any way we cannot assume to have a valid port. So the check in
+the constructor was harmful and users who ever encountered it (because they
+created 1024 libnl3 sockets) could not even work around it.
+
+Acked-by: Thomas Graf <tgraf@suug.ch>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 0271578987088210d7d2d68addbd5e8fe27d4383)
+---
+ lib/socket.c | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/lib/socket.c b/lib/socket.c
+index fa12e25..f9e68ff 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -126,10 +126,6 @@ static struct nl_sock *__alloc_socket(struct nl_cb *cb)
+ 	sk->s_peer.nl_family = AF_NETLINK;
+ 	sk->s_seq_expect = sk->s_seq_next = time(0);
+ 	sk->s_local.nl_pid = generate_local_port();
+-	if (sk->s_local.nl_pid == UINT32_MAX) {
+-		nl_socket_free(sk);
+-		return NULL;
+-	}
+ 
+ 	return sk;
+ }
+-- 
+2.4.3
+
+
+From 5de5c84c094fd178216accd2c29f32bfe5f7f67b Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 9 Apr 2014 12:08:52 +0200
+Subject: [PATCH 05/11] lib/socket: retry generate local port in nl_connect on
+ ADDRINUSE
+
+It can easily happen that the generated local netlink port is alrady in
+use. In that case bind will fail with ADDRINUSE.
+
+Users of libnl3 could workaround this, by managing the local ports
+themselves, but sometimes these users are libraries too and they also
+don't know which ports might be used by other components.
+
+This patch changes that nl_socket_alloc() no longer initilizes the local
+port id immediately. Instead it will be initialized when the user calls
+nl_socket_get_local_port() the first time and thereby shows interest in
+the value.
+
+If bind() fails with ADDRINUSE, check if the user ever cared about the
+local port, i.e. whether the local port is still unset. If it is still
+unset, assume that libnl should choose a suitable port and retry until
+an unused port can be found.
+
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+
+[thaller@redhat.com: modify original patch to use explicit gcc attribute
+to hide private symbols instead of "libnl.sym"]
+
+(cherry picked from commit 4dd5fdd0af2c0b7ffe1dbc49313f263dbb2e906f)
+---
+ include/Makefile.am              |   1 +
+ include/netlink-private/socket.h |  31 +++++++++++
+ include/netlink/utils.h          |   9 +++
+ lib/nl.c                         |  62 ++++++++++++++++++---
+ lib/socket.c                     | 116 ++++++++++++++++++++++++++++++++-------
+ lib/utils.c                      |   2 +-
+ 6 files changed, 192 insertions(+), 29 deletions(-)
+ create mode 100644 include/netlink-private/socket.h
+
+diff --git a/include/Makefile.am b/include/Makefile.am
+index b9487e0..d0ed008 100644
+--- a/include/Makefile.am
++++ b/include/Makefile.am
+@@ -125,6 +125,7 @@ noinst_HEADERS = \
+ 	linux/tc_ematch/tc_em_meta.h \
+ 	netlink-private/genl.h \
+ 	netlink-private/netlink.h \
++	netlink-private/socket.h \
+ 	netlink-private/tc.h \
+ 	netlink-private/types.h \
+ 	netlink-private/cache-api.h \
+diff --git a/include/netlink-private/socket.h b/include/netlink-private/socket.h
+new file mode 100644
+index 0000000..86a440c
+--- /dev/null
++++ b/include/netlink-private/socket.h
+@@ -0,0 +1,31 @@
++/*
++ * netlink-private/socket.h		Private declarations for socket
++ *
++ *	This library is free software; you can redistribute it and/or
++ *	modify it under the terms of the GNU Lesser General Public
++ *	License as published by the Free Software Foundation version 2.1
++ *	of the License.
++ *
++ * Copyright (c) 2014 Thomas Graf <tgraf@suug.ch>
++ */
++
++#ifndef NETLINK_SOCKET_PRIV_H_
++#define NETLINK_SOCKET_PRIV_H_
++
++#include <netlink-private/netlink.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++int _nl_socket_is_local_port_unspecified (struct nl_sock *sk);
++uint32_t _nl_socket_generate_local_port_no_release(struct nl_sock *sk);
++
++void _nl_socket_used_ports_release_all(const uint32_t *used_ports);
++void _nl_socket_used_ports_set(uint32_t *used_ports, uint32_t port);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git a/include/netlink/utils.h b/include/netlink/utils.h
+index 2094bb4..5b0d275 100644
+--- a/include/netlink/utils.h
++++ b/include/netlink/utils.h
+@@ -90,6 +90,15 @@ enum {
+ 	NL_CAPABILITY_ROUTE_BUILD_MSG_SET_SCOPE         = 1,
+ #define NL_CAPABILITY_ROUTE_BUILD_MSG_SET_SCOPE NL_CAPABILITY_ROUTE_BUILD_MSG_SET_SCOPE
+ 
++	/**
++	 * Indicate that the local port is unspecified until the user accesses
++	 * it (via nl_socket_get_local_port()) or until nl_connect(). More importantly,
++	 * if the port is left unspecified, nl_connect() will retry generating another
++	 * port when bind() fails with ADDRINUSE.
++	 */
++	NL_CAPABILITY_NL_CONNECT_RETRY_GENERATE_PORT_ON_ADDRINUSE = 4,
++#define NL_CAPABILITY_NL_CONNECT_RETRY_GENERATE_PORT_ON_ADDRINUSE NL_CAPABILITY_NL_CONNECT_RETRY_GENERATE_PORT_ON_ADDRINUSE
++
+ 	__NL_CAPABILITY_MAX
+ #define NL_CAPABILITY_MAX                               (__NL_CAPABILITY_MAX - 1)
+ };
+diff --git a/lib/nl.c b/lib/nl.c
+index 565747a..37065d4 100644
+--- a/lib/nl.c
++++ b/lib/nl.c
+@@ -26,6 +26,7 @@
+  */
+ 
+ #include <netlink-private/netlink.h>
++#include <netlink-private/socket.h>
+ #include <netlink/netlink.h>
+ #include <netlink/utils.h>
+ #include <netlink/handlers.h>
+@@ -75,6 +76,16 @@
+  *       be closed automatically if any of the `exec` family functions succeed.
+  *       This is essential for multi threaded programs.
+  *
++ * @note The local port (`nl_socket_get_local_port()`) is unspecified after
++ *       creating a new socket. It only gets determined when accessing the
++ *       port the first time or during `nl_connect()`. When nl_connect()
++ *       fails during `bind()` due to `ADDRINUSE`, it will retry with
++ *       different ports if the port is unspecified. Unless you want to enforce
++ *       the use of a specific local port, don't access the local port (or
++ *       reset it to `unspecified` by calling `nl_socket_set_local_port(sk, 0)`).
++ *       This capability is indicated by
++ *       `%NL_CAPABILITY_NL_CONNECT_RETRY_GENERATE_PORT_ON_ADDRINUSE`.
++ *
+  * @see nl_socket_alloc()
+  * @see nl_close()
+  *
+@@ -85,6 +96,7 @@
+ int nl_connect(struct nl_sock *sk, int protocol)
+ {
+ 	int err, flags = 0;
++	int errsv;
+ 	socklen_t addrlen;
+ 
+ #ifdef SOCK_CLOEXEC
+@@ -96,7 +108,9 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 
+ 	sk->s_fd = socket(AF_NETLINK, SOCK_RAW | flags, protocol);
+ 	if (sk->s_fd < 0) {
+-		err = -nl_syserr2nlerr(errno);
++		errsv = errno;
++		NL_DBG(4, "nl_connect(%p): socket() failed with %d\n", sk, errsv);
++		err = -nl_syserr2nlerr(errsv);
+ 		goto errout;
+ 	}
+ 
+@@ -106,11 +120,45 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 			goto errout;
+ 	}
+ 
+-	err = bind(sk->s_fd, (struct sockaddr*) &sk->s_local,
+-		   sizeof(sk->s_local));
+-	if (err < 0) {
+-		err = -nl_syserr2nlerr(errno);
+-		goto errout;
++	if (_nl_socket_is_local_port_unspecified (sk)) {
++		uint32_t port;
++		uint32_t used_ports[32] = { 0 };
++
++		while (1) {
++			port = _nl_socket_generate_local_port_no_release(sk);
++
++			if (port == UINT32_MAX) {
++				NL_DBG(4, "nl_connect(%p): no more unused local ports.\n", sk);
++				_nl_socket_used_ports_release_all(used_ports);
++				err = -NLE_EXIST;
++				goto errout;
++			}
++			err = bind(sk->s_fd, (struct sockaddr*) &sk->s_local,
++				   sizeof(sk->s_local));
++			if (err == 0)
++				break;
++
++			errsv = errno;
++			if (errsv == EADDRINUSE) {
++				NL_DBG(4, "nl_connect(%p): local port %u already in use. Retry.\n", sk, (unsigned) port);
++				_nl_socket_used_ports_set(used_ports, port);
++			} else {
++				NL_DBG(4, "nl_connect(%p): bind() for port %u failed with %d\n", sk, (unsigned) port, errsv);
++				_nl_socket_used_ports_release_all(used_ports);
++				err = -nl_syserr2nlerr(errsv);
++				goto errout;
++			}
++		}
++		_nl_socket_used_ports_release_all(used_ports);
++	} else {
++		err = bind(sk->s_fd, (struct sockaddr*) &sk->s_local,
++			   sizeof(sk->s_local));
++		if (err != 0) {
++			errsv = errno;
++			NL_DBG(4, "nl_connect(%p): bind() failed with %d\n", sk, errsv);
++			err = -nl_syserr2nlerr(errsv);
++			goto errout;
++		}
+ 	}
+ 
+ 	addrlen = sizeof(sk->s_local);
+@@ -405,7 +453,7 @@ void nl_complete_msg(struct nl_sock *sk, struct nl_msg *msg)
+ 
+ 	nlh = nlmsg_hdr(msg);
+ 	if (nlh->nlmsg_pid == NL_AUTO_PORT)
+-		nlh->nlmsg_pid = sk->s_local.nl_pid;
++		nlh->nlmsg_pid = nl_socket_get_local_port(sk);
+ 
+ 	if (nlh->nlmsg_seq == NL_AUTO_SEQ)
+ 		nlh->nlmsg_seq = sk->s_seq_next++;
+diff --git a/lib/socket.c b/lib/socket.c
+index f9e68ff..2d6a2d3 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -30,12 +30,15 @@
+ #include "defs.h"
+ 
+ #include <netlink-private/netlink.h>
++#include <netlink-private/socket.h>
+ #include <netlink/netlink.h>
+ #include <netlink/utils.h>
+ #include <netlink/handlers.h>
+ #include <netlink/msg.h>
+ #include <netlink/attr.h>
+ 
++#define NOEXPORT    __attribute__ ((visibility ("hidden")))
++
+ static int default_cb = NL_CB_DEFAULT;
+ 
+ static void __init init_default_cb(void)
+@@ -96,17 +99,61 @@ static uint32_t generate_local_port(void)
+ static void release_local_port(uint32_t port)
+ {
+ 	int nr;
++	uint32_t mask;
+ 
+ 	if (port == UINT32_MAX)
+ 		return;
+-	
++
++	BUG_ON(port == 0);
++
+ 	nr = port >> 22;
++	mask = 1UL << (nr % 32);
++	nr /= 32;
+ 
+ 	nl_write_lock(&port_map_lock);
+-	used_ports_map[nr / 32] &= ~(1 << (nr % 32));
++	BUG_ON((used_ports_map[nr] & mask) != mask);
++	used_ports_map[nr] &= ~mask;
+ 	nl_write_unlock(&port_map_lock);
+ }
+ 
++/** \cond skip */
++NOEXPORT
++void _nl_socket_used_ports_release_all(const uint32_t *used_ports)
++{
++	int i;
++
++	for (i = 0; i < 32; i++) {
++		if (used_ports[i] != 0) {
++			nl_write_lock(&port_map_lock);
++			for (; i < 32; i++) {
++				BUG_ON((used_ports_map[i] & used_ports[i]) != used_ports[i]);
++				used_ports_map[i] &= ~(used_ports[i]);
++			}
++			nl_write_unlock(&port_map_lock);
++			return;
++		}
++	}
++}
++
++NOEXPORT
++void _nl_socket_used_ports_set(uint32_t *used_ports, uint32_t port)
++{
++	int nr;
++	int32_t mask;
++
++	nr = port >> 22;
++	mask = 1UL << (nr % 32);
++	nr /= 32;
++
++	/*
++	BUG_ON(port == UINT32_MAX || port == 0 || (getpid() & 0x3FFFFF) != (port & 0x3FFFFF));
++	BUG_ON(used_ports[nr] & mask);
++	*/
++
++	used_ports[nr] |= mask;
++}
++/** \endcond */
++
+ /**
+  * @name Allocation
+  * @{
+@@ -125,7 +172,9 @@ static struct nl_sock *__alloc_socket(struct nl_cb *cb)
+ 	sk->s_local.nl_family = AF_NETLINK;
+ 	sk->s_peer.nl_family = AF_NETLINK;
+ 	sk->s_seq_expect = sk->s_seq_next = time(0);
+-	sk->s_local.nl_pid = generate_local_port();
++
++	/* the port is 0 (unspecified), meaning NL_OWN_PORT */
++	sk->s_flags = NL_OWN_PORT;
+ 
+ 	return sk;
+ }
+@@ -255,6 +304,28 @@ void nl_socket_enable_auto_ack(struct nl_sock *sk)
+ 
+ /** @} */
+ 
++/** \cond skip */
++NOEXPORT
++int _nl_socket_is_local_port_unspecified(struct nl_sock *sk)
++{
++	return (sk->s_local.nl_pid == 0);
++}
++
++NOEXPORT
++uint32_t _nl_socket_generate_local_port_no_release(struct nl_sock *sk)
++{
++	uint32_t port;
++
++	/* reset the port to generate_local_port(), but do not release
++	 * the previously generated port. */
++
++	port = generate_local_port();
++	sk->s_flags &= ~NL_OWN_PORT;
++	sk->s_local.nl_pid = port;
++	return port;
++}
++/** \endcond */
++
+ /**
+  * @name Source Idenficiation
+  * @{
+@@ -262,6 +333,18 @@ void nl_socket_enable_auto_ack(struct nl_sock *sk)
+ 
+ uint32_t nl_socket_get_local_port(const struct nl_sock *sk)
+ {
++	if (sk->s_local.nl_pid == 0) {
++		/* modify the const argument sk. This is justified, because
++		 * nobody ever saw the local_port from externally. So, we
++		 * initilize it on first use.
++		 *
++		 * Note that this also means that you cannot call this function
++		 * from multiple threads without synchronization. But nl_sock
++		 * is not automatically threadsafe anyway, so the user is not
++		 * allowed to do that.
++		 */
++		return _nl_socket_generate_local_port_no_release((struct nl_sock *) sk);
++	}
+ 	return sk->s_local.nl_pid;
+ }
+ 
+@@ -270,27 +353,18 @@ uint32_t nl_socket_get_local_port(const struct nl_sock *sk)
+  * @arg sk		Netlink socket.
+  * @arg port		Local port identifier
+  *
+- * Assigns a local port identifier to the socket. If port is 0
+- * a unique port identifier will be generated automatically.
++ * Assigns a local port identifier to the socket.
++ *
++ * If port is 0, the port is reset to 'unspecified' as it is after newly
++ * calling nl_socket_alloc().
++ * Unspecified means, that the port will be generated automatically later
++ * on first use (either on nl_socket_get_local_port() or nl_connect()).
+  */
+ void nl_socket_set_local_port(struct nl_sock *sk, uint32_t port)
+ {
+-	if (port == 0) {
+-		port = generate_local_port(); 
+-		/*
+-		 * Release local port after generation of a new one to be
+-		 * able to change local port using nl_socket_set_local_port(, 0)
+-		 */
+-		if (!(sk->s_flags & NL_OWN_PORT))
+-			release_local_port(sk->s_local.nl_pid);
+-		else
+-			sk->s_flags &= ~NL_OWN_PORT;
+-	} else  {
+-		if (!(sk->s_flags & NL_OWN_PORT))
+-			release_local_port(sk->s_local.nl_pid);
+-		sk->s_flags |= NL_OWN_PORT;
+-	}
+-
++	if (!(sk->s_flags & NL_OWN_PORT))
++		release_local_port(sk->s_local.nl_pid);
++	sk->s_flags |= NL_OWN_PORT;
+ 	sk->s_local.nl_pid = port;
+ }
+ 
+diff --git a/lib/utils.c b/lib/utils.c
+index 44350c3..5149e07 100644
+--- a/lib/utils.c
++++ b/lib/utils.c
+@@ -1138,7 +1138,7 @@ int nl_has_capability (int capability)
+ 			NL_CAPABILITY_ROUTE_BUILD_MSG_SET_SCOPE,
+ 			0,
+ 			0,
+-			0,
++			NL_CAPABILITY_NL_CONNECT_RETRY_GENERATE_PORT_ON_ADDRINUSE,
+ 			0,
+ 			0,
+ 			0,
+-- 
+2.4.3
+
+
+From 4177e716532b3263abb90c5a2afa6c60f37937e3 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 9 Apr 2014 12:08:53 +0200
+Subject: [PATCH 06/11] lib/socket: randomize the generated local port
+
+Instead of always trying the same order of ports when
+looking for an unused port, randomize the order (naively).
+
+As libnl-1 uses the same function, it is likely that two applications
+that are using both libraries generate the same ports. By chosing a
+different order how to select the local port, the chances are smaller
+for this to happen (however, it cannot avoid it entirely. The user
+and/or libnl3 still has to cope with the situation, that somebody
+else might already use the port).
+
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 1f734a8f892abcd3f81637df4a089155aca1b66a)
+---
+ lib/socket.c | 29 ++++++++++++++++++++++++++---
+ 1 file changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/lib/socket.c b/lib/socket.c
+index 2d6a2d3..01cf2a2 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -64,16 +64,39 @@ static NL_RW_LOCK(port_map_lock);
+ 
+ static uint32_t generate_local_port(void)
+ {
+-	int i, n;
++	int i, j, n, m;
++	static uint16_t idx_state = 0;
+ 	uint32_t pid = getpid() & 0x3FFFFF;
+ 
+ 	nl_write_lock(&port_map_lock);
+ 
+-	for (i = 0; i < 32; i++) {
++	if (idx_state == 0) {
++		uint32_t t = time(NULL);
++
++		/* from time to time (on average each 2^15 calls), the idx_state will
++		 * be zero again. No problem, just "seed" anew with time(). */
++		idx_state = t ^ (t >> 16) ^ 0x3047;
++	} else
++		idx_state = idx_state + 20011; /* add prime number */
++
++	i = idx_state >> 5;
++	n = idx_state;
++	for (j = 0; j < 32; j++) {
++		/* walk the index somewhat randomized, with always leaving the block
++		 * #0 as last. The reason is that libnl-1 will start at block #0,
++		 * so just leave the first 32 ports preferably for libnl-1 owned sockets
++		 * (this is relevant only if the applications ends up using both versions
++		 * of the library and doesn't hurt otherwise). */
++		if (j == 31)
++			i = 0;
++		else
++			i = (((i-1) + 7) % 31) + 1;
++
+ 		if (used_ports_map[i] == 0xFFFFFFFF)
+ 			continue;
+ 
+-		for (n = 0; n < 32; n++) {
++		for (m = 0; m < 32; m++) {
++			n = (n + 13) % 32;
+ 			if (1UL & (used_ports_map[i] >> n))
+ 				continue;
+ 
+-- 
+2.4.3
+
+
+From 1e7b7e5472fd3ee2ba69d2029bac02e4cf4148a1 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Thu, 5 Mar 2015 08:46:31 +0100
+Subject: [PATCH 07/11] lib/socket: remove NL_SOCK_BUFSIZE_SET socket flag
+
+The flag was not actually used.
+
+NL_SOCK_BUFSIZE_SET was only set by nl_socket_set_buffer_size().
+Note that you can only call nl_socket_set_buffer_size() on a socket that
+is already connected via nl_connect().
+
+On first call, nl_connect() would always see NL_SOCK_BUFSIZE_SET unset, and
+call nl_socket_set_buffer_size().
+
+Since the flag was never unset, when trying to connect a socket a second
+time, we would not set the buffer size again. Which was a bug.
+
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 15824e42730980132a9e52d0c9d6929808e5ae78)
+---
+ include/netlink-private/types.h | 1 -
+ lib/nl.c                        | 8 +++-----
+ lib/socket.c                    | 2 --
+ 3 files changed, 3 insertions(+), 8 deletions(-)
+
+diff --git a/include/netlink-private/types.h b/include/netlink-private/types.h
+index 72570c4..70b95c1 100644
+--- a/include/netlink-private/types.h
++++ b/include/netlink-private/types.h
+@@ -19,7 +19,6 @@
+ #include <netlink/route/route.h>
+ #include <netlink-private/route/tc-api.h>
+ 
+-#define NL_SOCK_BUFSIZE_SET	(1<<0)
+ #define NL_SOCK_PASSCRED	(1<<1)
+ #define NL_OWN_PORT		(1<<2)
+ #define NL_MSG_PEEK		(1<<3)
+diff --git a/lib/nl.c b/lib/nl.c
+index 37065d4..69d5f8f 100644
+--- a/lib/nl.c
++++ b/lib/nl.c
+@@ -114,11 +114,9 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 		goto errout;
+ 	}
+ 
+-	if (!(sk->s_flags & NL_SOCK_BUFSIZE_SET)) {
+-		err = nl_socket_set_buffer_size(sk, 0, 0);
+-		if (err < 0)
+-			goto errout;
+-	}
++	err = nl_socket_set_buffer_size(sk, 0, 0);
++	if (err < 0)
++		goto errout;
+ 
+ 	if (_nl_socket_is_local_port_unspecified (sk)) {
+ 		uint32_t port;
+diff --git a/lib/socket.c b/lib/socket.c
+index 01cf2a2..4741719 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -692,8 +692,6 @@ int nl_socket_set_buffer_size(struct nl_sock *sk, int rxbuf, int txbuf)
+ 	if (err < 0)
+ 		return -nl_syserr2nlerr(errno);
+ 
+-	sk->s_flags |= NL_SOCK_BUFSIZE_SET;
+-
+ 	return 0;
+ }
+ 
+-- 
+2.4.3
+
+
+From 38a6d5589e7d0cfe44331687ad76271f35ab7e12 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Thu, 5 Mar 2015 10:50:04 +0100
+Subject: [PATCH 08/11] lib/nl: preserve s_local if nl_connect() fails
+
+s_local.nl_pid is used to track the generated port unless NL_OWN_PORT is set.
+Ensure that getsockname() doesn't overwrite the value and possibly reset
+the local port manually to release the generated port.
+
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 9614acf4c4354892b5b734cace4778acfc019999)
+---
+ lib/nl.c | 24 ++++++++++++++++--------
+ 1 file changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/lib/nl.c b/lib/nl.c
+index 69d5f8f..b7a9ab4 100644
+--- a/lib/nl.c
++++ b/lib/nl.c
+@@ -98,6 +98,7 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 	int err, flags = 0;
+ 	int errsv;
+ 	socklen_t addrlen;
++	struct sockaddr_nl local = { 0 };
+ 
+ #ifdef SOCK_CLOEXEC
+ 	flags |= SOCK_CLOEXEC;
+@@ -159,32 +160,39 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 		}
+ 	}
+ 
+-	addrlen = sizeof(sk->s_local);
+-	err = getsockname(sk->s_fd, (struct sockaddr *) &sk->s_local,
++	addrlen = sizeof(local);
++	err = getsockname(sk->s_fd, (struct sockaddr *) &local,
+ 			  &addrlen);
+ 	if (err < 0) {
+ 		err = -nl_syserr2nlerr(errno);
+ 		goto errout;
+ 	}
+ 
+-	if (addrlen != sizeof(sk->s_local)) {
++	if (addrlen != sizeof(local)) {
+ 		err = -NLE_NOADDR;
+ 		goto errout;
+ 	}
+ 
+-	if (sk->s_local.nl_family != AF_NETLINK) {
++	if (local.nl_family != AF_NETLINK) {
+ 		err = -NLE_AF_NOSUPPORT;
+ 		goto errout;
+ 	}
+ 
++	if (sk->s_local.nl_pid != local.nl_pid) {
++		/* strange, the port id is not as expected. Set the local
++		 * port id to release a possibly generated port and un-own
++		 * it. */
++		nl_socket_set_local_port (sk, local.nl_pid);
++	}
++	sk->s_local = local;
+ 	sk->s_proto = protocol;
+ 
+ 	return 0;
+ errout:
+-        if (sk->s_fd != -1) {
+-    		close(sk->s_fd);
+-    		sk->s_fd = -1;
+-        }
++	if (sk->s_fd != -1) {
++		close(sk->s_fd);
++		sk->s_fd = -1;
++	}
+ 
+ 	return err;
+ }
+-- 
+2.4.3
+
+
+From 3c00a3b7d518cee0ac2092487f38ff2e75b8728e Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Fri, 10 Jul 2015 14:58:50 +0200
+Subject: [PATCH 09/11] socket: clear port when unable to generate local port
+
+When running out of local ports, _nl_socket_generate_local_port_no_release()
+would leave the socket with port UINT32_MAX. That means if nl_connect()
+fails due to out-of-ports, it would leave the port id assigned to an
+invalid port and the socket instance was not re-usable until the user
+called nl_socket_set_local_port(). Fix that by resetting the local port
+to zero.
+
+Thereby, also change generate_local_port() to return zero when
+running out of ports. zero is a more natural value for ~no port found~.
+It also matches the port that _nl_socket_generate_local_port_no_release()
+uses when failing to generate a port.
+
+Also ensure that zero cannot be returned as valid port by generate_local_port().
+Arguably, that would only be possible if (getpid() & 0x3FFFFF)
+returns zero. Just be extra cautious.
+
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit f78c3e82398a505ccf7e297b4021f23559ad8977)
+---
+ lib/nl.c     |  2 +-
+ lib/socket.c | 30 ++++++++++++++++++++++--------
+ 2 files changed, 23 insertions(+), 9 deletions(-)
+
+diff --git a/lib/nl.c b/lib/nl.c
+index b7a9ab4..20de342 100644
+--- a/lib/nl.c
++++ b/lib/nl.c
+@@ -126,7 +126,7 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 		while (1) {
+ 			port = _nl_socket_generate_local_port_no_release(sk);
+ 
+-			if (port == UINT32_MAX) {
++			if (port == 0) {
+ 				NL_DBG(4, "nl_connect(%p): no more unused local ports.\n", sk);
+ 				_nl_socket_used_ports_release_all(used_ports);
+ 				err = -NLE_EXIST;
+diff --git a/lib/socket.c b/lib/socket.c
+index 4741719..4f05d09 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -108,7 +108,9 @@ static uint32_t generate_local_port(void)
+ 
+ 			nl_write_unlock(&port_map_lock);
+ 
+-			return pid + (((uint32_t)n) << 22);
++			/* ensure we don't return zero. */
++			pid = pid + (((uint32_t)n) << 22);
++			return pid ? pid : 1024;
+ 		}
+ 	}
+ 
+@@ -116,7 +118,7 @@ static uint32_t generate_local_port(void)
+ 
+ 	/* Out of sockets in our own PID namespace, what to do? FIXME */
+ 	NL_DBG(1, "Warning: Ran out of unique local port namespace\n");
+-	return UINT32_MAX;
++	return 0;
+ }
+ 
+ static void release_local_port(uint32_t port)
+@@ -124,9 +126,6 @@ static void release_local_port(uint32_t port)
+ 	int nr;
+ 	uint32_t mask;
+ 
+-	if (port == UINT32_MAX)
+-		return;
+-
+ 	BUG_ON(port == 0);
+ 
+ 	nr = port >> 22;
+@@ -169,7 +168,7 @@ void _nl_socket_used_ports_set(uint32_t *used_ports, uint32_t port)
+ 	nr /= 32;
+ 
+ 	/*
+-	BUG_ON(port == UINT32_MAX || port == 0 || (getpid() & 0x3FFFFF) != (port & 0x3FFFFF));
++	BUG_ON(port == 0 || (getpid() & 0x3FFFFF) != (port & 0x3FFFFF));
+ 	BUG_ON(used_ports[nr] & mask);
+ 	*/
+ 
+@@ -343,8 +342,13 @@ uint32_t _nl_socket_generate_local_port_no_release(struct nl_sock *sk)
+ 	 * the previously generated port. */
+ 
+ 	port = generate_local_port();
+-	sk->s_flags &= ~NL_OWN_PORT;
+ 	sk->s_local.nl_pid = port;
++	if (port == 0) {
++		/* failed to find an unsed port. Restore the socket to have an
++		 * unspecified port. */
++		sk->s_flags |= NL_OWN_PORT;
++	} else
++		sk->s_flags &= ~NL_OWN_PORT;
+ 	return port;
+ }
+ /** \endcond */
+@@ -357,6 +361,8 @@ uint32_t _nl_socket_generate_local_port_no_release(struct nl_sock *sk)
+ uint32_t nl_socket_get_local_port(const struct nl_sock *sk)
+ {
+ 	if (sk->s_local.nl_pid == 0) {
++		struct nl_sock *sk_mutable = (struct nl_sock *) sk;
++
+ 		/* modify the const argument sk. This is justified, because
+ 		 * nobody ever saw the local_port from externally. So, we
+ 		 * initilize it on first use.
+@@ -366,7 +372,15 @@ uint32_t nl_socket_get_local_port(const struct nl_sock *sk)
+ 		 * is not automatically threadsafe anyway, so the user is not
+ 		 * allowed to do that.
+ 		 */
+-		return _nl_socket_generate_local_port_no_release((struct nl_sock *) sk);
++		sk_mutable->s_local.nl_pid = generate_local_port();
++		if (sk_mutable->s_local.nl_pid == 0) {
++			/* could not generate a local port. Assign UINT32_MAX to preserve
++			 * backward compatibility. A user who cares can clear that anyway
++			 * with nl_socket_set_local_port(). */
++			sk_mutable->s_local.nl_pid = UINT32_MAX;
++			sk_mutable->s_flags |= NL_OWN_PORT;
++		} else
++			sk_mutable->s_flags &= ~NL_OWN_PORT;
+ 	}
+ 	return sk->s_local.nl_pid;
+ }
+-- 
+2.4.3
+
+
+From eb5e052347de18e1133d3cbf507e31d05cd5db6e Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Fri, 10 Jul 2015 14:58:51 +0200
+Subject: [PATCH 10/11] socket: add fallback for nl_connect() by trying to bind
+ to unspecified local port
+
+libnl allows the user to explicitly set the local port before connecting
+the socket. A more convenient way is to leave the local port unspecified
+and let libnl generate a port id.
+
+As it is, generate_local_port() would try at most 1024 ports, that
+means if a user tries to connect more sockets, the automatism will
+fail.
+
+Kernel also supports choosing the local port itself (via netlink_autobind()).
+So, this could be fixed by always leaving the port unspecified and let
+kernel decide on the port. For that we could entirely drop generate_local_port().
+
+There are however problems with that:
+
+  - it is unclear why generate_local_port() was even introduced in the
+    first place instead of always relying kernel. This code already
+    appeared in libnl-1, so maybe there was a good reason for it or
+    it is necessary on some kernel versions.
+
+  - The deprecated libnl-1 library also uses a form of generate_local_port().
+    Its first guess would always be getpid(), but the problem is that
+    it would not retry on EADDRINUSE. Currently libnl-3 generates ports in
+    a different sequence and will not generate a conflicting port (until it
+    already exhausted 1016 other ports).
+    Hence, currently if your application uses libnl1 and libnl3
+    together, the automatism might just work without conflicts
+    (commit 1f734a8f892abcd3f81637df4a089155aca1b66a).
+    Accidently, kernel/netlink_autobind() also first tries the process
+    id as port. That means, if we change libnl-3 to leave the decision
+    to kernel, and
+      - the application connects sockets both via libnl-1 and libnl-3
+      - and the libnl-3 socket happens to connect first
+    then the libnl-1 socket would fail to connect without retrying
+    another port.
+
+  - Removing generate_local_port() entirely changes behavior in the
+    following case:
+
+        sk = nl_socket_alloc();
+        /* accessing local port before connecting the socket used to
+         * freeze the local port to the generated value. */
+        port = nl_socket_get_local_port(sk);
+        nl_connect(sk, NETLINK_...);
+
+Maybe the issues are minor and it would simplify the code just to get
+rid of the cruft. But instead fix the issue without changing behavior.
+Just keep trying with generate_local_port() first, before fallback to
+kernel.
+
+Reported-by: Julien Courtat <julien.courtat@6wind.com>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+
+http://lists.infradead.org/pipermail/libnl/2015-June/001889.html
+(cherry picked from commit 96e1e5bdc2e803700055395cc3c428fa2525d1ca)
+---
+ lib/nl.c     | 29 ++++++++++++++++++-----------
+ lib/socket.c |  3 ---
+ 2 files changed, 18 insertions(+), 14 deletions(-)
+
+diff --git a/lib/nl.c b/lib/nl.c
+index 20de342..bbd1c14 100644
+--- a/lib/nl.c
++++ b/lib/nl.c
+@@ -99,6 +99,7 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 	int errsv;
+ 	socklen_t addrlen;
+ 	struct sockaddr_nl local = { 0 };
++	int try_bind = 1;
+ 
+ #ifdef SOCK_CLOEXEC
+ 	flags |= SOCK_CLOEXEC;
+@@ -122,20 +123,26 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 	if (_nl_socket_is_local_port_unspecified (sk)) {
+ 		uint32_t port;
+ 		uint32_t used_ports[32] = { 0 };
++		int ntries = 0;
+ 
+ 		while (1) {
++			if (ntries++ > 5) {
++				/* try only a few times. We hit this only if many ports are already in
++				 * use but allocated *outside* libnl/generate_local_port(). */
++				nl_socket_set_local_port (sk, 0);
++				break;
++			}
++
+ 			port = _nl_socket_generate_local_port_no_release(sk);
++			if (port == 0)
++				break;
+ 
+-			if (port == 0) {
+-				NL_DBG(4, "nl_connect(%p): no more unused local ports.\n", sk);
+-				_nl_socket_used_ports_release_all(used_ports);
+-				err = -NLE_EXIST;
+-				goto errout;
+-			}
+ 			err = bind(sk->s_fd, (struct sockaddr*) &sk->s_local,
+ 				   sizeof(sk->s_local));
+-			if (err == 0)
++			if (err == 0) {
++				try_bind = 0;
+ 				break;
++			}
+ 
+ 			errsv = errno;
+ 			if (errsv == EADDRINUSE) {
+@@ -149,7 +156,8 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 			}
+ 		}
+ 		_nl_socket_used_ports_release_all(used_ports);
+-	} else {
++	}
++	if (try_bind) {
+ 		err = bind(sk->s_fd, (struct sockaddr*) &sk->s_local,
+ 			   sizeof(sk->s_local));
+ 		if (err != 0) {
+@@ -179,9 +187,8 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 	}
+ 
+ 	if (sk->s_local.nl_pid != local.nl_pid) {
+-		/* strange, the port id is not as expected. Set the local
+-		 * port id to release a possibly generated port and un-own
+-		 * it. */
++		/* The port id is different. That can happen if the port id was zero
++		 * and kernel assigned a local port. */
+ 		nl_socket_set_local_port (sk, local.nl_pid);
+ 	}
+ 	sk->s_local = local;
+diff --git a/lib/socket.c b/lib/socket.c
+index 4f05d09..6e2aaf5 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -115,9 +115,6 @@ static uint32_t generate_local_port(void)
+ 	}
+ 
+ 	nl_write_unlock(&port_map_lock);
+-
+-	/* Out of sockets in our own PID namespace, what to do? FIXME */
+-	NL_DBG(1, "Warning: Ran out of unique local port namespace\n");
+ 	return 0;
+ }
+ 
+-- 
+2.4.3
+
+
+From 9d7d3895fe979ccffab350d2f71793982b060c8b Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Mon, 24 Aug 2015 17:57:16 +0200
+Subject: [PATCH 11/11] socket: fix assertion in nl_connect() when all ports
+ are already in use
+
+When generating a port fails a few times (because they are already in used
+outside of libnl's knowledge), we would back off generating a local
+port and instead let kernel decide.
+
+There was however a bug in nl_connect() that caused an assertion:
+
+    BUG at file position socket.c:147:_nl_socket_used_ports_release_all
+    app: socket.c:147: _nl_socket_used_ports_release_all: Assertion `0' failed.
+
+Fixes: 96e1e5bdc2e803700055395cc3c428fa2525d1ca
+(cherry picked from commit eaa75b7c7d3e6a4df1a2e7591ae295acfae3f73e)
+---
+ include/netlink-private/socket.h | 2 +-
+ lib/nl.c                         | 4 ++--
+ lib/socket.c                     | 7 +++++--
+ 3 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/include/netlink-private/socket.h b/include/netlink-private/socket.h
+index 86a440c..9ceecfd 100644
+--- a/include/netlink-private/socket.h
++++ b/include/netlink-private/socket.h
+@@ -19,7 +19,7 @@ extern "C" {
+ #endif
+ 
+ int _nl_socket_is_local_port_unspecified (struct nl_sock *sk);
+-uint32_t _nl_socket_generate_local_port_no_release(struct nl_sock *sk);
++uint32_t _nl_socket_set_local_port_no_release(struct nl_sock *sk, int generate_other);
+ 
+ void _nl_socket_used_ports_release_all(const uint32_t *used_ports);
+ void _nl_socket_used_ports_set(uint32_t *used_ports, uint32_t port);
+diff --git a/lib/nl.c b/lib/nl.c
+index bbd1c14..db000a3 100644
+--- a/lib/nl.c
++++ b/lib/nl.c
+@@ -129,11 +129,11 @@ int nl_connect(struct nl_sock *sk, int protocol)
+ 			if (ntries++ > 5) {
+ 				/* try only a few times. We hit this only if many ports are already in
+ 				 * use but allocated *outside* libnl/generate_local_port(). */
+-				nl_socket_set_local_port (sk, 0);
++				_nl_socket_set_local_port_no_release (sk, 0);
+ 				break;
+ 			}
+ 
+-			port = _nl_socket_generate_local_port_no_release(sk);
++			port = _nl_socket_set_local_port_no_release(sk, 1);
+ 			if (port == 0)
+ 				break;
+ 
+diff --git a/lib/socket.c b/lib/socket.c
+index 6e2aaf5..d3eab60 100644
+--- a/lib/socket.c
++++ b/lib/socket.c
+@@ -331,14 +331,17 @@ int _nl_socket_is_local_port_unspecified(struct nl_sock *sk)
+ }
+ 
+ NOEXPORT
+-uint32_t _nl_socket_generate_local_port_no_release(struct nl_sock *sk)
++uint32_t _nl_socket_set_local_port_no_release(struct nl_sock *sk, int generate_other)
+ {
+ 	uint32_t port;
+ 
+ 	/* reset the port to generate_local_port(), but do not release
+ 	 * the previously generated port. */
+ 
+-	port = generate_local_port();
++	if (generate_other)
++		port = generate_local_port();
++	else
++		port = 0;
+ 	sk->s_local.nl_pid = port;
+ 	if (port == 0) {
+ 		/* failed to find an unsed port. Restore the socket to have an
+-- 
+2.4.3
+

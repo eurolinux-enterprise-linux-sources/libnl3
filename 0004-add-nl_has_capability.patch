@@ -1,0 +1,89 @@
+From 02f989353861bca76e0bf228b89e3b2a38c851be Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Thu, 13 Mar 2014 13:16:05 +0100
+Subject: [PATCH 1/1] utils: add nl_has_capability() function
+
+Acked-by: Thomas Graf <tgraf@suug.ch>
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 68d6bd7f37dc9a0c004b4355770e9c475fb964cd)
+---
+ include/netlink/utils.h |  8 ++++++++
+ lib/utils.c             | 43 +++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 51 insertions(+)
+
+diff --git a/include/netlink/utils.h b/include/netlink/utils.h
+index 502341a..da46a55 100644
+--- a/include/netlink/utils.h
++++ b/include/netlink/utils.h
+@@ -79,6 +79,14 @@ extern void	nl_new_line(struct nl_dump_params *);
+ extern void	nl_dump(struct nl_dump_params *, const char *, ...);
+ extern void	nl_dump_line(struct nl_dump_params *, const char *, ...);
+ 
++enum {
++	NL_CAPABILITY_NONE,
++
++	__NL_CAPABILITY_MAX
++#define NL_CAPABILITY_MAX                               (__NL_CAPABILITY_MAX - 1)
++};
++int nl_has_capability (int capability);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/lib/utils.c b/lib/utils.c
+index 3bfa604..7354956 100644
+--- a/lib/utils.c
++++ b/lib/utils.c
+@@ -1097,6 +1097,49 @@ void dump_from_ops(struct nl_object *obj, struct nl_dump_params *params)
+ 		obj->ce_ops->oo_dump[type](obj, params);
+ }
+ 
++/**
++ * Check for library capabilities
++ *
++ * @arg	capability	capability identifier
++ *
++ * Check whether the loaded libnl library supports a certain capability.
++ * This is useful so that applications can workaround known issues of
++ * libnl that are fixed in newer library versions, without
++ * having a hard dependency on the new version. It is also useful, for
++ * capabilities that cannot easily be detected using autoconf tests.
++ * The capabilities are integer constants with name NL_CAPABILITY_*.
++ *
++ * As this function is intended to detect capabilities at runtime,
++ * you might not want to depend during compile time on the NL_CAPABILITY_*
++ * names. Instead you can use their numeric values which are guaranteed not to
++ * change meaning.
++ *
++ * @return non zero if libnl supports a certain capability, 0 otherwise.
++ **/
++int nl_has_capability (int capability)
++{
++	static const uint8_t caps[ ( NL_CAPABILITY_MAX + 7 ) / 8  ] = {
++#define _NL_ASSERT(expr) ( 0 * sizeof(struct { unsigned int x: ( (!!(expr)) ? 1 : -1 ); }) )
++#define _NL_SETV(i, r, v) \
++		( _NL_ASSERT( (v) == 0 || (i) * 8 + (r) == (v) - 1 ) + \
++		  ( (v) == 0 ? 0 : (1 << (r)) ) )
++#define _NL_SET(i, v0, v1, v2, v3, v4, v5, v6, v7) \
++		[(i)] = ( \
++			_NL_SETV((i), 0, (v0)) | _NL_SETV((i), 4, (v4)) | \
++			_NL_SETV((i), 1, (v1)) | _NL_SETV((i), 5, (v5)) | \
++			_NL_SETV((i), 2, (v2)) | _NL_SETV((i), 6, (v6)) | \
++			_NL_SETV((i), 3, (v3)) | _NL_SETV((i), 7, (v7)) )
++#undef _NL_SET
++#undef _NL_SETV
++#undef _NL_ASSERT
++	};
++
++	if (capability <= 0 || capability > NL_CAPABILITY_MAX)
++		return 0;
++	capability--;
++	return (caps[capability / 8] & (1 << (capability % 8))) != 0;
++}
++
+ /** @endcond */
+ 
+ /** @} */
+-- 
+1.8.5.3
+

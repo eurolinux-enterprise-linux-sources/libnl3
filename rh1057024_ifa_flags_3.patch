@@ -1,0 +1,40 @@
+From 899914790776c71e0436fe39db1f5e28e6709a98 Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Wed, 8 Jan 2014 01:44:58 +0100
+Subject: [PATCH 3/3] addr: add address flag IFA_F_NOPREFIXROUTE
+
+(cherry picked from commit b203c89d862a6ae3e82122fe1b6882b427d53551)
+
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+---
+ include/linux/if_addr.h | 1 +
+ lib/route/addr.c        | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/include/linux/if_addr.h b/include/linux/if_addr.h
+index 94b32b4..7d4de85 100644
+--- a/include/linux/if_addr.h
++++ b/include/linux/if_addr.h
+@@ -49,6 +49,7 @@ enum {
+ #define IFA_F_TENTATIVE		0x40
+ #define IFA_F_PERMANENT		0x80
+ #define IFA_F_MANAGETEMPADDR	0x100
++#define IFA_F_NOPREFIXROUTE	0x200
+ 
+ struct ifa_cacheinfo {
+ 	__u32	ifa_prefered;
+diff --git a/lib/route/addr.c b/lib/route/addr.c
+index c3c59ce..e98d73a 100644
+--- a/lib/route/addr.c
++++ b/lib/route/addr.c
+@@ -1024,6 +1024,7 @@ static const struct trans_tbl addr_flags[] = {
+ 	__ADD(IFA_F_TENTATIVE, tentative)
+ 	__ADD(IFA_F_PERMANENT, permanent)
+ 	__ADD(IFA_F_MANAGETEMPADDR, mngtmpaddr)
++	__ADD(IFA_F_NOPREFIXROUTE, noprefixroute)
+ };
+ 
+ char *rtnl_addr_flags2str(int flags, char *buf, size_t size)
+-- 
+1.8.3.1
+

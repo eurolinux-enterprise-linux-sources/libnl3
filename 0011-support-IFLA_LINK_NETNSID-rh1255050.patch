@@ -1,0 +1,539 @@
+From 42d8ecc85940e86213d194ae81bb74d174726084 Mon Sep 17 00:00:00 2001
+From: Thomas Graf <tgraf@suug.ch>
+Date: Sat, 9 Nov 2013 10:04:35 +0100
+Subject: [PATCH 1/4] link: Fall back to global provisioned link cache if
+ object is not a cache resident
+
+... if that fails, print ifindices directly.
+
+Reported-by: Dan Williams <dcbw@redhat.com>
+Signed-off-by: Thomas Graf <tgraf@suug.ch>
+(cherry picked from commit 04040110cde4966e287e8d04a8ebea2855c89a79)
+---
+ lib/route/link.c | 31 +++++++++++++++++++++++--------
+ 1 file changed, 23 insertions(+), 8 deletions(-)
+
+diff --git a/lib/route/link.c b/lib/route/link.c
+index 1f27247..49a8b65 100644
+--- a/lib/route/link.c
++++ b/lib/route/link.c
+@@ -599,6 +599,12 @@ static void link_dump_line(struct nl_object *obj, struct nl_dump_params *p)
+ 	char buf[128];
+ 	struct nl_cache *cache = obj->ce_cache;
+ 	struct rtnl_link *link = (struct rtnl_link *) obj;
++	int fetched_cache = 0;
++
++	if (!cache) {
++		cache = nl_cache_mngt_require_safe("route/link");
++		fetched_cache = 1;
++	}
+ 
+ 	nl_dump_line(p, "%s %s ", link->l_name,
+ 		     nl_llproto2str(link->l_arptype, buf, sizeof(buf)));
+@@ -607,10 +613,13 @@ static void link_dump_line(struct nl_object *obj, struct nl_dump_params *p)
+ 		nl_dump(p, "%s ", nl_addr2str(link->l_addr, buf, sizeof(buf)));
+ 
+ 	if (link->ce_mask & LINK_ATTR_MASTER) {
+-		struct rtnl_link *master = rtnl_link_get(cache, link->l_master);
+-		nl_dump(p, "master %s ", master ? master->l_name : "inv");
+-		if (master)
+-			rtnl_link_put(master);
++		if (cache) {
++			struct rtnl_link *master = rtnl_link_get(cache, link->l_master);
++			nl_dump(p, "master %s ", master ? master->l_name : "inv");
++			if (master)
++				rtnl_link_put(master);
++		} else
++			nl_dump(p, "master %d ", link->l_master);
+ 	}
+ 
+ 	rtnl_link_flags2str(link->l_flags, buf, sizeof(buf));
+@@ -618,10 +627,13 @@ static void link_dump_line(struct nl_object *obj, struct nl_dump_params *p)
+ 		nl_dump(p, "<%s> ", buf);
+ 
+ 	if (link->ce_mask & LINK_ATTR_LINK) {
+-		struct rtnl_link *ll = rtnl_link_get(cache, link->l_link);
+-		nl_dump(p, "slave-of %s ", ll ? ll->l_name : "NONE");
+-		if (ll)
+-			rtnl_link_put(ll);
++		if (cache) {
++			struct rtnl_link *ll = rtnl_link_get(cache, link->l_link);
++			nl_dump(p, "slave-of %s ", ll ? ll->l_name : "NONE");
++			if (ll)
++				rtnl_link_put(ll);
++		} else
++			nl_dump(p, "slave-of %d ", link->l_link);
+ 	}
+ 
+ 	if (link->ce_mask & LINK_ATTR_GROUP)
+@@ -633,6 +645,9 @@ static void link_dump_line(struct nl_object *obj, struct nl_dump_params *p)
+ 	do_foreach_af(link, af_dump_line, p);
+ 
+ 	nl_dump(p, "\n");
++
++	if (fetched_cache)
++		nl_cache_put(cache);
+ }
+ 
+ static void link_dump_details(struct nl_object *obj, struct nl_dump_params *p)
+-- 
+2.4.3
+
+
+From a67cd6a68c16292f724269bc8da5f2f2501cacb7 Mon Sep 17 00:00:00 2001
+From: Cong Wang <xiyou.wangcong@gmail.com>
+Date: Tue, 9 Jun 2015 21:53:09 -0700
+Subject: [PATCH 2/4] include/linux: update copy of kernel header "if_link.h"
+
+Taken from upstream kernel commit b953c0d234bc72e8489d3bf51a276c5c4ec85345
+(v4.1), file 'include/uapi/linux/if_link.h' (after `make headers_install`).
+
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit f808b84a5de7c33694d362807e897d8a064b9bcd)
+---
+ include/linux/if_link.h | 69 +++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 64 insertions(+), 5 deletions(-)
+
+diff --git a/include/linux/if_link.h b/include/linux/if_link.h
+index ff95760..3d0d613 100644
+--- a/include/linux/if_link.h
++++ b/include/linux/if_link.h
+@@ -1,5 +1,5 @@
+-#ifndef _UAPI_LINUX_IF_LINK_H
+-#define _UAPI_LINUX_IF_LINK_H
++#ifndef _LINUX_IF_LINK_H
++#define _LINUX_IF_LINK_H
+ 
+ #include <linux/types.h>
+ #include <linux/netlink.h>
+@@ -145,6 +145,9 @@ enum {
+ 	IFLA_CARRIER,
+ 	IFLA_PHYS_PORT_ID,
+ 	IFLA_CARRIER_CHANGES,
++	IFLA_PHYS_SWITCH_ID,
++	IFLA_LINK_NETNSID,
++	IFLA_PHYS_PORT_NAME,
+ 	__IFLA_MAX
+ };
+ 
+@@ -152,10 +155,8 @@ enum {
+ #define IFLA_MAX (__IFLA_MAX - 1)
+ 
+ /* backwards compatibility for userspace */
+-#ifndef __KERNEL__
+ #define IFLA_RTA(r)  ((struct rtattr*)(((char*)(r)) + NLMSG_ALIGN(sizeof(struct ifinfomsg))))
+ #define IFLA_PAYLOAD(n) NLMSG_PAYLOAD(n,sizeof(struct ifinfomsg))
+-#endif
+ 
+ enum {
+ 	IFLA_INET_UNSPEC,
+@@ -213,8 +214,24 @@ enum {
+ enum in6_addr_gen_mode {
+ 	IN6_ADDR_GEN_MODE_EUI64,
+ 	IN6_ADDR_GEN_MODE_NONE,
++	IN6_ADDR_GEN_MODE_STABLE_PRIVACY,
+ };
+ 
++/* Bridge section */
++
++enum {
++	IFLA_BR_UNSPEC,
++	IFLA_BR_FORWARD_DELAY,
++	IFLA_BR_HELLO_TIME,
++	IFLA_BR_MAX_AGE,
++	IFLA_BR_AGEING_TIME,
++	IFLA_BR_STP_STATE,
++	IFLA_BR_PRIORITY,
++	__IFLA_BR_MAX,
++};
++
++#define IFLA_BR_MAX	(__IFLA_BR_MAX - 1)
++
+ enum {
+ 	BRIDGE_MODE_UNSPEC,
+ 	BRIDGE_MODE_HAIRPIN,
+@@ -231,6 +248,9 @@ enum {
+ 	IFLA_BRPORT_FAST_LEAVE,	/* multicast fast leave    */
+ 	IFLA_BRPORT_LEARNING,	/* mac learning */
+ 	IFLA_BRPORT_UNICAST_FLOOD, /* flood unicast traffic */
++	IFLA_BRPORT_PROXYARP,	/* proxy ARP */
++	IFLA_BRPORT_LEARNING_SYNC, /* mac learning sync from device */
++	IFLA_BRPORT_PROXYARP_WIFI, /* proxy ARP for Wi-Fi */
+ 	__IFLA_BRPORT_MAX
+ };
+ #define IFLA_BRPORT_MAX (__IFLA_BRPORT_MAX - 1)
+@@ -291,6 +311,10 @@ enum {
+ 	IFLA_MACVLAN_UNSPEC,
+ 	IFLA_MACVLAN_MODE,
+ 	IFLA_MACVLAN_FLAGS,
++	IFLA_MACVLAN_MACADDR_MODE,
++	IFLA_MACVLAN_MACADDR,
++	IFLA_MACVLAN_MACADDR_DATA,
++	IFLA_MACVLAN_MACADDR_COUNT,
+ 	__IFLA_MACVLAN_MAX,
+ };
+ 
+@@ -301,10 +325,33 @@ enum macvlan_mode {
+ 	MACVLAN_MODE_VEPA    = 2, /* talk to other ports through ext bridge */
+ 	MACVLAN_MODE_BRIDGE  = 4, /* talk to bridge ports directly */
+ 	MACVLAN_MODE_PASSTHRU = 8,/* take over the underlying device */
++	MACVLAN_MODE_SOURCE  = 16,/* use source MAC address list to assign */
++};
++
++enum macvlan_macaddr_mode {
++	MACVLAN_MACADDR_ADD,
++	MACVLAN_MACADDR_DEL,
++	MACVLAN_MACADDR_FLUSH,
++	MACVLAN_MACADDR_SET,
+ };
+ 
+ #define MACVLAN_FLAG_NOPROMISC	1
+ 
++/* IPVLAN section */
++enum {
++	IFLA_IPVLAN_UNSPEC,
++	IFLA_IPVLAN_MODE,
++	__IFLA_IPVLAN_MAX
++};
++
++#define IFLA_IPVLAN_MAX (__IFLA_IPVLAN_MAX - 1)
++
++enum ipvlan_mode {
++	IPVLAN_MODE_L2 = 0,
++	IPVLAN_MODE_L3,
++	IPVLAN_MODE_MAX
++};
++
+ /* VXLAN section */
+ enum {
+ 	IFLA_VXLAN_UNSPEC,
+@@ -328,6 +375,10 @@ enum {
+ 	IFLA_VXLAN_UDP_CSUM,
+ 	IFLA_VXLAN_UDP_ZERO_CSUM6_TX,
+ 	IFLA_VXLAN_UDP_ZERO_CSUM6_RX,
++	IFLA_VXLAN_REMCSUM_TX,
++	IFLA_VXLAN_REMCSUM_RX,
++	IFLA_VXLAN_GBP,
++	IFLA_VXLAN_REMCSUM_NOPARTIAL,
+ 	__IFLA_VXLAN_MAX
+ };
+ #define IFLA_VXLAN_MAX	(__IFLA_VXLAN_MAX - 1)
+@@ -412,6 +463,9 @@ enum {
+ 	IFLA_VF_SPOOFCHK,	/* Spoof Checking on/off switch */
+ 	IFLA_VF_LINK_STATE,	/* link state enable/disable/auto switch */
+ 	IFLA_VF_RATE,		/* Min and Max TX Bandwidth Allocation */
++	IFLA_VF_RSS_QUERY_EN,	/* RSS Redirection Table and Hash Key query
++				 * on/off switch
++				 */
+ 	__IFLA_VF_MAX,
+ };
+ 
+@@ -456,6 +510,11 @@ struct ifla_vf_link_state {
+ 	__u32 link_state;
+ };
+ 
++struct ifla_vf_rss_query_en {
++	__u32 vf;
++	__u32 setting;
++};
++
+ /* VF ports management section
+  *
+  *	Nested layout of set/get msg is:
+@@ -561,4 +620,4 @@ enum {
+ 
+ #define IFLA_HSR_MAX (__IFLA_HSR_MAX - 1)
+ 
+-#endif /* _UAPI_LINUX_IF_LINK_H */
++#endif /* _LINUX_IF_LINK_H */
+-- 
+2.4.3
+
+
+From f348f1be682ea7be2d6953162d618c0b8f69e2ab Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Fri, 14 Aug 2015 17:32:38 +0200
+Subject: [PATCH 3/4] route/link: add support for IFLA_LINK_NETNSID
+
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 66aab65595fb20bf166936fcfa4c8568b58f7f68)
+---
+ include/netlink-private/types.h |  3 ++-
+ include/netlink/route/link.h    | 14 ++++++++++++
+ lib/route/link.c                | 49 ++++++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 64 insertions(+), 2 deletions(-)
+
+diff --git a/include/netlink-private/types.h b/include/netlink-private/types.h
+index 70b95c1..598e79e 100644
+--- a/include/netlink-private/types.h
++++ b/include/netlink-private/types.h
+@@ -157,8 +157,9 @@ struct rtnl_link
+ 	uint32_t			l_index;
+ 	uint32_t			l_flags;
+ 	uint32_t			l_change;
+-	uint32_t 			l_mtu;
++	uint32_t			l_mtu;
+ 	uint32_t			l_link;
++	uint32_t                        l_link_netnsid;
+ 	uint32_t			l_txqlen;
+ 	uint32_t			l_weight;
+ 	uint32_t			l_master;
+diff --git a/include/netlink/route/link.h b/include/netlink/route/link.h
+index 2d061be..ca37f66 100644
+--- a/include/netlink/route/link.h
++++ b/include/netlink/route/link.h
+@@ -201,6 +201,20 @@ extern uint8_t	rtnl_link_get_operstate(struct rtnl_link *);
+ extern void	rtnl_link_set_linkmode(struct rtnl_link *, uint8_t);
+ extern uint8_t	rtnl_link_get_linkmode(struct rtnl_link *);
+ 
++#ifdef NL_RHEL7_ENABLE_LINK_NETNSID
++/* The API for IFLA_LINK_NETNSID was backported from upstream to
++ * RHEL-7 (https://bugzilla.redhat.com/show_bug.cgi?id=1255050).
++ * Using backported API can cause problems when upgrading
++ * or downgrading the libnl package or when the user chooses to
++ * compile libnl from upstream source.
++ *
++ * Only use it if you understand the consequences and are willing
++ * to cope with them.
++ * */
++int             rtnl_link_set_link_netnsid(struct rtnl_link *link, uint32_t link_netnsid);
++int             rtnl_link_get_link_netnsid(const struct rtnl_link *link, uint32_t *out_link_netnsid);
++#endif
++
+ extern const char *	rtnl_link_get_ifalias(struct rtnl_link *);
+ extern void		rtnl_link_set_ifalias(struct rtnl_link *, const char *);
+ 
+diff --git a/lib/route/link.c b/lib/route/link.c
+index 49a8b65..d914fd5 100644
+--- a/lib/route/link.c
++++ b/lib/route/link.c
+@@ -57,6 +57,7 @@
+ #define LINK_ATTR_CARRIER	(1 << 25)
+ #define LINK_ATTR_PROTINFO	(1 << 26)
+ #define LINK_ATTR_AF_SPEC	(1 << 27)
++#define LINK_ATTR_LINK_NETNSID  (1 << 31)
+ 
+ static struct nl_cache_ops rtnl_link_ops;
+ static struct nl_object_ops link_obj_ops;
+@@ -443,6 +444,11 @@ static int link_msg_parser(struct nl_cache_ops *ops, struct sockaddr_nl *who,
+ 		link->ce_mask |= LINK_ATTR_LINK;
+ 	}
+ 
++	if (tb[IFLA_LINK_NETNSID]) {
++		link->l_link_netnsid = nla_get_u32(tb[IFLA_LINK_NETNSID]);
++		link->ce_mask |= LINK_ATTR_LINK_NETNSID;
++	}
++
+ 	if (tb[IFLA_WEIGHT]) {
+ 		link->l_weight = nla_get_u32(tb[IFLA_WEIGHT]);
+ 		link->ce_mask |= LINK_ATTR_WEIGHT;
+@@ -627,7 +633,8 @@ static void link_dump_line(struct nl_object *obj, struct nl_dump_params *p)
+ 		nl_dump(p, "<%s> ", buf);
+ 
+ 	if (link->ce_mask & LINK_ATTR_LINK) {
+-		if (cache) {
++		if (   cache
++		    && !(link->ce_mask & LINK_ATTR_LINK_NETNSID)) {
+ 			struct rtnl_link *ll = rtnl_link_get(cache, link->l_link);
+ 			nl_dump(p, "slave-of %s ", ll ? ll->l_name : "NONE");
+ 			if (ll)
+@@ -635,6 +642,8 @@ static void link_dump_line(struct nl_object *obj, struct nl_dump_params *p)
+ 		} else
+ 			nl_dump(p, "slave-of %d ", link->l_link);
+ 	}
++	if (link->ce_mask & LINK_ATTR_LINK_NETNSID)
++		nl_dump(p, "link-netnsid %u ", link->l_link_netnsid);
+ 
+ 	if (link->ce_mask & LINK_ATTR_GROUP)
+ 		nl_dump(p, "group %u ", link->l_group);
+@@ -858,6 +867,7 @@ static int link_compare(struct nl_object *_a, struct nl_object *_b,
+ 	diff |= LINK_DIFF(IFINDEX,	a->l_index != b->l_index);
+ 	diff |= LINK_DIFF(MTU,		a->l_mtu != b->l_mtu);
+ 	diff |= LINK_DIFF(LINK,		a->l_link != b->l_link);
++	diff |= LINK_DIFF(LINK_NETNSID, a->l_link_netnsid != b->l_link_netnsid);
+ 	diff |= LINK_DIFF(TXQLEN,	a->l_txqlen != b->l_txqlen);
+ 	diff |= LINK_DIFF(WEIGHT,	a->l_weight != b->l_weight);
+ 	diff |= LINK_DIFF(MASTER,	a->l_master != b->l_master);
+@@ -1238,6 +1248,9 @@ static int build_link_msg(int cmd, struct ifinfomsg *hdr,
+ 	if (link->ce_mask & LINK_ATTR_LINK)
+ 		NLA_PUT_U32(msg, IFLA_LINK, link->l_link);
+ 
++	if (link->ce_mask & LINK_ATTR_LINK_NETNSID)
++		NLA_PUT_U32(msg, IFLA_LINK_NETNSID, link->l_link_netnsid);
++
+ 	if (link->ce_mask & LINK_ATTR_MASTER)
+ 		NLA_PUT_U32(msg, IFLA_MASTER, link->l_master);
+ 
+@@ -1894,6 +1907,40 @@ int rtnl_link_get_link(struct rtnl_link *link)
+ }
+ 
+ /**
++ * Set the netnsid of the link
++ * @arg link            Link object
++ * @link_netnsid        the netnsid to set
++ *
++ * Sets the IFLA_LINK_NETNSID attribute of the link
++ * @returns 0 on success
++ */
++int rtnl_link_set_link_netnsid(struct rtnl_link *link, uint32_t link_netnsid)
++{
++	link->l_link_netnsid = link_netnsid;
++	link->ce_mask |= LINK_ATTR_LINK_NETNSID;
++	return 0;
++}
++
++/**
++ * Get the netnsid of the link
++ * @arg link            Link object
++ * @out_link_netnsid    the netnsid
++ *
++ * Gets the IFLA_LINK_NETNSID attribute of the link
++ * or returns an error if the value is unset.
++ *
++ * @returns 0 on success
++ */
++int rtnl_link_get_link_netnsid(const struct rtnl_link *link, uint32_t *out_link_netnsid)
++{
++	if (!(link->ce_mask & LINK_ATTR_LINK_NETNSID))
++		return -NLE_INVAL;
++
++	*out_link_netnsid = link->l_link_netnsid;
++	return 0;
++}
++
++/**
+  * Set master link of link object
+  * @arg link		Link object
+  * @arg ifindex		Interface index of master link
+-- 
+2.4.3
+
+
+From 7b4336d26a83d5de10bbaf67804400995848a51c Mon Sep 17 00:00:00 2001
+From: Thomas Haller <thaller@redhat.com>
+Date: Fri, 14 Aug 2015 17:32:36 +0200
+Subject: [PATCH 4/4] route/link: make link_netnsid argument (signed) int32_t
+
+Fixes: 66aab65595fb20bf166936fcfa4c8568b58f7f68
+
+Signed-off-by: Thomas Haller <thaller@redhat.com>
+(cherry picked from commit 2fc97e66e7f509e89f36aa601939c314bdfe6c08)
+
+[thaller@redhat.com: while backporting, the patch was modified and
+partially merged with commit 7bb956501ccd58ed3bbffc59de996f056e178683.
+Instead of backporting new API for s32 attributes, it was defined locally]
+---
+ include/netlink-private/types.h |  2 +-
+ include/netlink/route/link.h    |  4 ++--
+ lib/route/link.c                | 32 +++++++++++++++++++++++++++-----
+ 3 files changed, 30 insertions(+), 8 deletions(-)
+
+diff --git a/include/netlink-private/types.h b/include/netlink-private/types.h
+index 598e79e..0550e8a 100644
+--- a/include/netlink-private/types.h
++++ b/include/netlink-private/types.h
+@@ -159,7 +159,7 @@ struct rtnl_link
+ 	uint32_t			l_change;
+ 	uint32_t			l_mtu;
+ 	uint32_t			l_link;
+-	uint32_t                        l_link_netnsid;
++	int32_t                         l_link_netnsid;
+ 	uint32_t			l_txqlen;
+ 	uint32_t			l_weight;
+ 	uint32_t			l_master;
+diff --git a/include/netlink/route/link.h b/include/netlink/route/link.h
+index ca37f66..e1e6e20 100644
+--- a/include/netlink/route/link.h
++++ b/include/netlink/route/link.h
+@@ -211,8 +211,8 @@ extern uint8_t	rtnl_link_get_linkmode(struct rtnl_link *);
+  * Only use it if you understand the consequences and are willing
+  * to cope with them.
+  * */
+-int             rtnl_link_set_link_netnsid(struct rtnl_link *link, uint32_t link_netnsid);
+-int             rtnl_link_get_link_netnsid(const struct rtnl_link *link, uint32_t *out_link_netnsid);
++int             rtnl_link_set_link_netnsid(struct rtnl_link *link, int32_t link_netnsid);
++int             rtnl_link_get_link_netnsid(const struct rtnl_link *link, int32_t *out_link_netnsid);
+ #endif
+ 
+ extern const char *	rtnl_link_get_ifalias(struct rtnl_link *);
+diff --git a/lib/route/link.c b/lib/route/link.c
+index d914fd5..fc88959 100644
+--- a/lib/route/link.c
++++ b/lib/route/link.c
+@@ -59,6 +59,28 @@
+ #define LINK_ATTR_AF_SPEC	(1 << 27)
+ #define LINK_ATTR_LINK_NETNSID  (1 << 31)
+ 
++/***********************************************************************/
++
++/* upstream added new utility function. While backporting,
++ * they were needed, but we don't want to intoduce new
++ * API. Instead, define them locall.y */
++
++#define NLA_PUT_S32(msg, attrtype, value) \
++	NLA_PUT_TYPE(msg, int32_t, attrtype, value)
++
++/**
++ * Return payload of 32 bit integer attribute.
++ * @arg nla             32 bit integer attribute.
++ *
++ * @return Payload as 32 bit integer.
++ */
++static int32_t nla_get_s32(const struct nlattr *nla)
++{
++	return *(const int32_t *) nla_data(nla);
++}
++
++/***********************************************************************/
++
+ static struct nl_cache_ops rtnl_link_ops;
+ static struct nl_object_ops link_obj_ops;
+ /** @endcond */
+@@ -445,7 +467,7 @@ static int link_msg_parser(struct nl_cache_ops *ops, struct sockaddr_nl *who,
+ 	}
+ 
+ 	if (tb[IFLA_LINK_NETNSID]) {
+-		link->l_link_netnsid = nla_get_u32(tb[IFLA_LINK_NETNSID]);
++		link->l_link_netnsid = nla_get_s32(tb[IFLA_LINK_NETNSID]);
+ 		link->ce_mask |= LINK_ATTR_LINK_NETNSID;
+ 	}
+ 
+@@ -643,7 +665,7 @@ static void link_dump_line(struct nl_object *obj, struct nl_dump_params *p)
+ 			nl_dump(p, "slave-of %d ", link->l_link);
+ 	}
+ 	if (link->ce_mask & LINK_ATTR_LINK_NETNSID)
+-		nl_dump(p, "link-netnsid %u ", link->l_link_netnsid);
++		nl_dump(p, "link-netnsid %d ", link->l_link_netnsid);
+ 
+ 	if (link->ce_mask & LINK_ATTR_GROUP)
+ 		nl_dump(p, "group %u ", link->l_group);
+@@ -1249,7 +1271,7 @@ static int build_link_msg(int cmd, struct ifinfomsg *hdr,
+ 		NLA_PUT_U32(msg, IFLA_LINK, link->l_link);
+ 
+ 	if (link->ce_mask & LINK_ATTR_LINK_NETNSID)
+-		NLA_PUT_U32(msg, IFLA_LINK_NETNSID, link->l_link_netnsid);
++		NLA_PUT_S32(msg, IFLA_LINK_NETNSID, link->l_link_netnsid);
+ 
+ 	if (link->ce_mask & LINK_ATTR_MASTER)
+ 		NLA_PUT_U32(msg, IFLA_MASTER, link->l_master);
+@@ -1914,7 +1936,7 @@ int rtnl_link_get_link(struct rtnl_link *link)
+  * Sets the IFLA_LINK_NETNSID attribute of the link
+  * @returns 0 on success
+  */
+-int rtnl_link_set_link_netnsid(struct rtnl_link *link, uint32_t link_netnsid)
++int rtnl_link_set_link_netnsid(struct rtnl_link *link, int32_t link_netnsid)
+ {
+ 	link->l_link_netnsid = link_netnsid;
+ 	link->ce_mask |= LINK_ATTR_LINK_NETNSID;
+@@ -1931,7 +1953,7 @@ int rtnl_link_set_link_netnsid(struct rtnl_link *link, uint32_t link_netnsid)
+  *
+  * @returns 0 on success
+  */
+-int rtnl_link_get_link_netnsid(const struct rtnl_link *link, uint32_t *out_link_netnsid)
++int rtnl_link_get_link_netnsid(const struct rtnl_link *link, int32_t *out_link_netnsid)
+ {
+ 	if (!(link->ce_mask & LINK_ATTR_LINK_NETNSID))
+ 		return -NLE_INVAL;
+-- 
+2.4.3
+

@@ -368,7 +368,11 @@ static int cls_msg_parser(struct nl_cache_ops *ops, struct sockaddr_nl *who,
 		goto errout;
 
 	cls->c_prio = TC_H_MAJ(cls->c_info) >> 16;
+	if (cls->c_prio)
+		cls->ce_mask |= CLS_ATTR_PRIO;
 	cls->c_protocol = ntohs(TC_H_MIN(cls->c_info));
+	if (cls->c_protocol)
+		cls->ce_mask |= CLS_ATTR_PROTOCOL;
 
 	err = pp->pp_cb(OBJ_CAST(cls), pp);
 errout:
@@ -407,6 +411,7 @@ static struct nl_cache_ops rtnl_cls_ops = {
 					END_OF_MSGTYPES_LIST,
 				  },
 	.co_protocol		= NETLINK_ROUTE,
+	.co_groups		= tc_groups,
 	.co_request_update	= cls_request_update,
 	.co_msg_parser		= cls_msg_parser,
 	.co_obj_ops		= &cls_obj_ops,

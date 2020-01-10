@@ -110,10 +110,14 @@ struct nl_derived_object {
 struct nl_object *nl_object_clone(struct nl_object *obj)
 {
 	struct nl_object *new;
-	struct nl_object_ops *ops = obj_ops(obj);
+	struct nl_object_ops *ops;
 	int doff = offsetof(struct nl_derived_object, data);
 	int size;
 
+	if (!obj)
+		return NULL;
+
+	ops = obj_ops(obj);
 	new = nl_object_alloc(ops);
 	if (!new)
 		return NULL;
@@ -165,7 +169,12 @@ int nl_object_update(struct nl_object *dst, struct nl_object *src)
  */
 void nl_object_free(struct nl_object *obj)
 {
-	struct nl_object_ops *ops = obj_ops(obj);
+	struct nl_object_ops *ops;
+
+	if (!obj)
+		return;
+
+	ops = obj_ops(obj);
 
 	if (obj->ce_refcnt > 0)
 		NL_DBG(1, "Warning: Freeing object in use...\n");
@@ -176,9 +185,9 @@ void nl_object_free(struct nl_object *obj)
 	if (ops->oo_free_data)
 		ops->oo_free_data(obj);
 
-	free(obj);
-
 	NL_DBG(4, "Freed object %p\n", obj);
+
+	free(obj);
 }
 
 /** @} */
@@ -316,8 +325,10 @@ int nl_object_identical(struct nl_object *a, struct nl_object *b)
 		if (req_attrs_a != req_attrs_b)
 			return 0;
 		req_attrs = req_attrs_a;
-	} else {
+	} else if (ops->oo_id_attrs) {
 		req_attrs = ops->oo_id_attrs;
+	} else {
+		req_attrs = 0xFFFFFFFF;
 	}
 	if (req_attrs == 0xFFFFFFFF)
 		req_attrs = a->ce_mask & b->ce_mask;
@@ -332,7 +343,7 @@ int nl_object_identical(struct nl_object *a, struct nl_object *b)
 	if (ops->oo_compare == NULL)
 		return 0;
 
-	return !(ops->oo_compare(a, b, req_attrs, 0));
+	return !(ops->oo_compare(a, b, req_attrs, ID_COMPARISON));
 }
 
 /**
@@ -347,14 +358,39 @@ int nl_object_identical(struct nl_object *a, struct nl_object *b)
  *
  * @return Bitmask describing differences or 0 if they are completely identical.
  */
-uint32_t nl_object_diff(struct nl_object *a, struct nl_object *b)
+uint64_t nl_object_diff64(struct nl_object *a, struct nl_object *b)
 {
 	struct nl_object_ops *ops = obj_ops(a);
 
 	if (ops != obj_ops(b) || ops->oo_compare == NULL)
-		return UINT_MAX;
+		return UINT64_MAX;
 
 	return ops->oo_compare(a, b, ~0, 0);
+}
+
+/**
+ * Compute 32-bit bitmask representing difference in attribute values
+ * @arg a		an object
+ * @arg b		another object of same type
+ *
+ * The bitmask returned is specific to an object type, each bit set represents
+ * an attribute which mismatches in either of the two objects. Unavailability
+ * of an attribute in one object and presence in the other is regarded a
+ * mismatch as well.
+ *
+ * @return Bitmask describing differences or 0 if they are completely identical.
+ *	   32nd bit indicates if higher bits from the 64-bit compare were
+ *	   different.
+ */
+uint32_t nl_object_diff(struct nl_object *a, struct nl_object *b)
+{
+	uint64_t  diff;
+
+	diff = nl_object_diff64(a, b);
+
+	return (diff & ~((uint64_t) 0xFFFFFFFF))
+		? (uint32_t) diff | (1 << 31)
+		: (uint32_t) diff;
 }
 
 /**
@@ -372,7 +408,7 @@ int nl_object_match_filter(struct nl_object *obj, struct nl_object *filter)
 
 	if (ops != obj_ops(filter) || ops->oo_compare == NULL)
 		return 0;
-	
+
 	return !(ops->oo_compare(obj, filter, filter->ce_mask,
 				 LOOSE_COMPARISON));
 }

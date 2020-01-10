@@ -9,6 +9,7 @@
  * Copyright (c) 2003-2010 Thomas Graf <tgraf@suug.ch>
  */
 
+#include <linux/if.h>
 #include <netlink/cli/utils.h>
 #include <netlink/cli/link.h>
 
@@ -42,6 +43,7 @@ static void print_usage(void)
 	"     --txqlen=NUM      TX queue length\n"
 	"     --weight=NUM      weight\n"
 	"     --ifalias=NAME    alias name (SNMP IfAlias)\n"
+	"     --state=up/down   set interface up/down\n"
 	);
 	exit(0);
 }
@@ -56,7 +58,7 @@ static void set_cb(struct nl_object *obj, void *arg)
 	};
 	int err;
 
-	if ((err = rtnl_link_change(sock, link, change, 0) < 0))
+	if ((err = rtnl_link_change(sock, link, change, 0)) < 0)
 		nl_cli_fatal(err, "Unable to change link: %s",
 			     nl_geterror(err));
 
@@ -86,6 +88,7 @@ int main(int argc, char *argv[])
 			ARG_TXQLEN,
 			ARG_WEIGHT,
 			ARG_IFALIAS,
+			ARG_STATE,
 		};
 		static struct option long_opts[] = {
 			{ "quiet", 0, 0, 'q' },
@@ -98,6 +101,7 @@ int main(int argc, char *argv[])
 			{ "txqlen", 1, 0, ARG_TXQLEN },
 			{ "weight", 1, 0, ARG_WEIGHT },
 			{ "ifalias", 1, 0, ARG_IFALIAS },
+			{ "state", 1, 0, ARG_STATE },
 			{ 0, 0, 0, 0 }
 		};
 
@@ -116,6 +120,12 @@ int main(int argc, char *argv[])
 		case ARG_TXQLEN: nl_cli_link_parse_txqlen(change, optarg); break;
 		case ARG_WEIGHT: nl_cli_link_parse_weight(change, optarg); break;
 		case ARG_IFALIAS: nl_cli_link_parse_ifalias(change, optarg); break;
+		case ARG_STATE:
+			if(!strcmp(optarg, "up"))
+				rtnl_link_set_flags(change, IFF_UP);
+			else if(!strcmp(optarg, "down"))
+				rtnl_link_unset_flags(change, IFF_UP);
+			break;
 		}
 	}
 

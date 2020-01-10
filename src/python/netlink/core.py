@@ -10,6 +10,8 @@ This module provides an interface to netlink sockets
 
 The module contains the following public classes:
  - Socket -- The netlink socket
+ - Message -- The netlink message
+ - Callback -- The netlink callback handler
  - Object -- Abstract object (based on struct nl_obect in libnl) used as
          base class for all object types which can be put into a Cache
  - Cache -- A collection of objects which are derived from the base
@@ -34,8 +36,9 @@ import sys
 import socket
 
 __all__ = [
-    'Message',
     'Socket',
+    'Message',
+    'Callback',
     'DumpParams',
     'Object',
     'Cache',
@@ -153,14 +156,40 @@ class Message(object):
     def send(self, sock):
         sock.send(self)
 
+class Callback(object):
+    """Netlink callback"""
+
+    def __init__(self, kind=capi.NL_CB_DEFAULT):
+        if isinstance(kind, Callback):
+            self._cb = capi.py_nl_cb_clone(kind._cb)
+        else:
+            self._cb = capi.nl_cb_alloc(kind)
+
+    def __del__(self):
+        capi.py_nl_cb_put(self._cb)
+
+    def set_type(self, t, k, handler, obj):
+        return capi.py_nl_cb_set(self._cb, t, k, handler, obj)
+
+    def set_all(self, k, handler, obj):
+        return capi.py_nl_cb_set_all(self._cb, k, handler, obj)
+
+    def set_err(self, k, handler, obj):
+        return capi.py_nl_cb_err(self._cb, k, handler, obj)
+
+    def clone(self):
+        return Callback(self)
+
 class Socket(object):
     """Netlink socket"""
 
     def __init__(self, cb=None):
-        if cb is None:
+        if isinstance(cb, Callback):
+            self._sock = capi.nl_socket_alloc_cb(cb._cb)
+        elif cb == None:
             self._sock = capi.nl_socket_alloc()
         else:
-            self._sock = capi.nl_socket_alloc_cb(cb)
+            raise Exception('\'cb\' parameter has wrong type')
 
         if self._sock is None:
             raise Exception('NULL pointer returned while allocating socket')
@@ -169,7 +198,7 @@ class Socket(object):
         capi.nl_socket_free(self._sock)
 
     def __str__(self):
-        return 'nlsock<{0}>'.format(self.localPort)
+        return 'nlsock<{0}>'.format(self.local_port)
 
     @property
     def local_port(self):
@@ -211,6 +240,21 @@ class Socket(object):
             raise Exception('Failed to send')
         else:
             return ret
+
+    def send_auto_complete(self, msg):
+        if not isinstance(msg, Message):
+            raise Exception('must provide Message instance')
+        ret = capi.nl_send_auto_complete(self._sock, msg._msg)
+        if ret < 0:
+            raise Exception('send_auto_complete failed: ret=%d' % ret)
+        return ret
+
+    def recvmsgs(self, recv_cb):
+        if not isinstance(recv_cb, Callback):
+            raise Exception('must provide Callback instance')
+        ret = capi.nl_recvmsgs(self._sock, recv_cb._cb)
+        if ret < 0:
+            raise Exception('recvmsg failed: ret=%d' % ret)
 
 _sockets = {}
 
@@ -405,6 +449,9 @@ class ObjIterator(object):
         return capi.nl_cache_get_next(self._nl_object)
 
     def next(self):
+        return self.__next__()
+
+    def __next__(self):
         if self._end:
             raise StopIteration()
 
@@ -522,12 +569,12 @@ class Cache(object):
         capi.nl_cache_refill(socket._sock, self._nl_cache)
         return self
 
-    def resync(self, socket=None, cb=None):
+    def resync(self, socket=None, cb=None, args=None):
         """Synchronize cache with content in kernel"""
         if socket is None:
             socket = lookup_socket(self._protocol)
 
-        capi.nl_cache_resync(socket._sock, self._nl_cache, cb)
+        capi.nl_cache_resync(socket._sock, self._nl_cache, cb, args)
 
     def provide(self):
         """Provide this cache to others
@@ -624,6 +671,8 @@ class AbstractAddress(object):
         self._nl_addr = None
 
         if isinstance(addr, str):
+            # returns None on success I guess
+            # TO CORRECT 
             addr = capi.addr_parse(addr, socket.AF_UNSPEC)
             if addr is None:
                 raise ValueError('Invalid address format')

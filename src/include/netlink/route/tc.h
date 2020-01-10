@@ -27,6 +27,7 @@ enum rtnl_tc_type {
 	RTNL_TC_TYPE_QDISC,
 	RTNL_TC_TYPE_CLASS,
 	RTNL_TC_TYPE_CLS,
+	RTNL_TC_TYPE_ACT,
 	__RTNL_TC_TYPE_MAX,
 };
 
@@ -96,6 +97,8 @@ extern uint32_t		rtnl_tc_get_parent(struct rtnl_tc *);
 extern int		rtnl_tc_set_kind(struct rtnl_tc *, const char *);
 extern char *		rtnl_tc_get_kind(struct rtnl_tc *);
 extern uint64_t		rtnl_tc_get_stat(struct rtnl_tc *, enum rtnl_tc_stat);
+extern char *		rtnl_tc_stat2str(enum rtnl_tc_stat, char *, size_t);
+extern int		rtnl_tc_str2stat(const char *);
 
 extern int		rtnl_tc_calc_txtime(int, int);
 extern int		rtnl_tc_calc_bufsize(int, int);

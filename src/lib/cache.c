@@ -307,6 +307,9 @@ struct nl_cache *nl_cache_subset(struct nl_cache *orig,
 	if (!cache)
 		return NULL;
 
+	NL_DBG(2, "Filling subset of cache %p <%s> with filter %p into %p\n",
+	       orig, nl_cache_name(orig), filter, cache);
+
 	nl_list_for_each_entry(obj, &orig->c_items, ce_list) {
 		if (!nl_object_match_filter(obj, filter))
 			continue;
@@ -341,6 +344,8 @@ struct nl_cache *nl_cache_clone(struct nl_cache *cache)
 	if (!clone)
 		return NULL;
 
+	NL_DBG(2, "Cloning %p into %p\n", cache, clone);
+
 	nl_list_for_each_entry(obj, &cache->c_items, ce_list)
 		nl_cache_add(clone, obj);
 
@@ -362,7 +367,7 @@ void nl_cache_clear(struct nl_cache *cache)
 {
 	struct nl_object *obj, *tmp;
 
-	NL_DBG(1, "Clearing cache %p <%s>...\n", cache, nl_cache_name(cache));
+	NL_DBG(2, "Clearing cache %p <%s>...\n", cache, nl_cache_name(cache));
 
 	nl_list_for_each_entry_safe(obj, tmp, &cache->c_items, ce_list)
 		nl_cache_remove(obj);
@@ -375,7 +380,7 @@ static void __nl_cache_free(struct nl_cache *cache)
 	if (cache->hashtable)
 		nl_hash_table_free(cache->hashtable);
 
-	NL_DBG(1, "Freeing cache %p <%s>...\n", cache, nl_cache_name(cache));
+	NL_DBG(2, "Freeing cache %p <%s>...\n", cache, nl_cache_name(cache));
 	free(cache);
 }
 
@@ -386,6 +391,9 @@ static void __nl_cache_free(struct nl_cache *cache)
 void nl_cache_get(struct nl_cache *cache)
 {
 	cache->c_refcnt++;
+
+	NL_DBG(3, "Incremented cache %p <%s> reference count to %d\n",
+	       cache, nl_cache_name(cache), cache->c_refcnt);
 }
 
 /**
@@ -403,8 +411,9 @@ void nl_cache_free(struct nl_cache *cache)
 		return;
 
 	cache->c_refcnt--;
-	NL_DBG(4, "Returned cache reference %p, %d remaining\n",
-	       cache, cache->c_refcnt);
+
+	NL_DBG(3, "Decremented cache %p <%s> reference count, %d remaining\n",
+	       cache, nl_cache_name(cache), cache->c_refcnt);
 
 	if (cache->c_refcnt <= 0)
 		__nl_cache_free(cache);
@@ -439,8 +448,8 @@ static int __cache_add(struct nl_cache *cache, struct nl_object *obj)
 	nl_list_add_tail(&obj->ce_list, &cache->c_items);
 	cache->c_nitems++;
 
-	NL_DBG(1, "Added %p to cache %p <%s>.\n",
-	       obj, cache, nl_cache_name(cache));
+	NL_DBG(3, "Added object %p to cache %p <%s>, nitems %d\n",
+	       obj, cache, nl_cache_name(cache), cache->c_nitems);
 
 	return 0;
 }
@@ -476,6 +485,8 @@ int nl_cache_add(struct nl_cache *cache, struct nl_object *obj)
 		return -NLE_OBJ_MISMATCH;
 
 	if (!nl_list_empty(&obj->ce_list)) {
+		NL_DBG(3, "Object %p already in cache, cloning new object\n", obj);
+
 		new = nl_object_clone(obj);
 		if (!new)
 			return -NLE_NOMEM;
@@ -514,7 +525,8 @@ int nl_cache_move(struct nl_cache *cache, struct nl_object *obj)
 	if (cache->c_ops->co_obj_ops != obj->ce_ops)
 		return -NLE_OBJ_MISMATCH;
 
-	NL_DBG(3, "Moving object %p to cache %p\n", obj, cache);
+	NL_DBG(3, "Moving object %p from cache %p to cache %p\n",
+	       obj, obj->ce_cache, cache);
 	
 	/* Acquire reference, if already in a cache this will be
 	 * reverted during removal */
@@ -547,7 +559,7 @@ void nl_cache_remove(struct nl_object *obj)
 	if (cache->hashtable) {
 		ret = nl_hash_table_del(cache->hashtable, obj);
 		if (ret < 0)
-			NL_DBG(3, "Failed to delete %p from cache %p <%s>.\n",
+			NL_DBG(2, "Failed to delete %p from cache %p <%s>.\n",
 			       obj, cache, nl_cache_name(cache));
 	}
 
@@ -556,7 +568,7 @@ void nl_cache_remove(struct nl_object *obj)
 	nl_object_put(obj);
 	cache->c_nitems--;
 
-	NL_DBG(1, "Deleted %p from cache %p <%s>.\n",
+	NL_DBG(2, "Deleted object %p from cache %p <%s>.\n",
 	       obj, cache, nl_cache_name(cache));
 }
 
@@ -625,16 +637,21 @@ void nl_cache_set_flags(struct nl_cache *cache, unsigned int flags)
  *
  * @see nl_cache_pickup(), nl_cache_resync()
  *
- * @return 0 on success or a negative error code.
+ * @return 0 on success or a negative error code. Some implementations
+ * of co_request_update() return a positive number on success that is
+ * the number of bytes sent. Treat any non-negative number as success too.
  */
 static int nl_cache_request_full_dump(struct nl_sock *sk,
 				      struct nl_cache *cache)
 {
-	NL_DBG(2, "Requesting dump from kernel for cache %p <%s>...\n",
-	          cache, nl_cache_name(cache));
+	if (sk->s_proto != cache->c_ops->co_protocol)
+		return -NLE_PROTO_MISMATCH;
 
 	if (cache->c_ops->co_request_update == NULL)
 		return -NLE_OPNOTSUPP;
+
+	NL_DBG(2, "Requesting update from kernel for cache %p <%s>\n",
+	          cache, nl_cache_name(cache));
 
 	return cache->c_ops->co_request_update(cache, sk);
 }
@@ -674,8 +691,8 @@ static int __cache_pickup(struct nl_sock *sk, struct nl_cache *cache,
 		.params = param,
 	};
 
-	NL_DBG(1, "Picking up answer for cache %p <%s>...\n",
-		  cache, nl_cache_name(cache));
+	NL_DBG(2, "Picking up answer for cache %p <%s>\n",
+	       cache, nl_cache_name(cache));
 
 	cb = nl_cb_clone(sk->s_cb);
 	if (cb == NULL)
@@ -685,16 +702,15 @@ static int __cache_pickup(struct nl_sock *sk, struct nl_cache *cache,
 
 	err = nl_recvmsgs(sk, cb);
 	if (err < 0)
-		NL_DBG(2, "While picking up for %p <%s>, recvmsgs() returned " \
-		       "%d: %s", cache, nl_cache_name(cache),
-		       err, nl_geterror(err));
+		NL_DBG(2, "While picking up for %p <%s>, recvmsgs() returned %d: %s\n",
+		       cache, nl_cache_name(cache), err, nl_geterror(err));
 
 	nl_cb_put(cb);
 
 	return err;
 }
 
-static int pickup_cb(struct nl_object *c, struct nl_parser_param *p)
+static int pickup_checkdup_cb(struct nl_object *c, struct nl_parser_param *p)
 {
 	struct nl_cache *cache = (struct nl_cache *)p->pp_arg;
 	struct nl_object *old;
@@ -713,6 +729,42 @@ static int pickup_cb(struct nl_object *c, struct nl_parser_param *p)
 	return nl_cache_add(cache, c);
 }
 
+static int pickup_cb(struct nl_object *c, struct nl_parser_param *p)
+{
+	struct nl_cache *cache = p->pp_arg;
+
+	return nl_cache_add(cache, c);
+}
+
+static int __nl_cache_pickup(struct nl_sock *sk, struct nl_cache *cache,
+			     int checkdup)
+{
+	struct nl_parser_param p;
+
+	p.pp_cb = checkdup ? pickup_checkdup_cb : pickup_cb;
+	p.pp_arg = cache;
+
+	if (sk->s_proto != cache->c_ops->co_protocol)
+		return -NLE_PROTO_MISMATCH;
+
+	return __cache_pickup(sk, cache, &p);
+}
+
+/**
+ * Pickup a netlink dump response and put it into a cache.
+ * @arg sk		Netlink socket.
+ * @arg cache		Cache to put items into.
+ *
+ * Waits for netlink messages to arrive, parses them and puts them into
+ * the specified cache.
+ *
+ * @return 0 on success or a negative error code.
+ */
+int nl_cache_pickup_checkdup(struct nl_sock *sk, struct nl_cache *cache)
+{
+	return __nl_cache_pickup(sk, cache, 1);
+}
+
 /**
  * Pickup a netlink dump response and put it into a cache.
  * @arg sk		Netlink socket.
@@ -728,12 +780,7 @@ static int pickup_cb(struct nl_object *c, struct nl_parser_param *p)
  */
 int nl_cache_pickup(struct nl_sock *sk, struct nl_cache *cache)
 {
-	struct nl_parser_param p = {
-		.pp_cb = pickup_cb,
-		.pp_arg = cache,
-	};
-
-	return __cache_pickup(sk, cache, &p);
+	return __nl_cache_pickup(sk, cache, 0);
 }
 
 static int cache_include(struct nl_cache *cache, struct nl_object *obj,
@@ -800,6 +847,9 @@ int nl_cache_include(struct nl_cache *cache, struct nl_object *obj,
 			return cache_include(cache, obj, &ops->co_msgtypes[i],
 					     change_cb, data);
 
+	NL_DBG(3, "Object %p does not seem to belong to cache %p <%s>\n",
+	       obj, cache, nl_cache_name(cache));
+
 	return -NLE_MSGTYPE_NOSUPPORT;
 }
 
@@ -825,6 +875,9 @@ int nl_cache_resync(struct nl_sock *sk, struct nl_cache *cache,
 		.pp_arg = &ca,
 	};
 	int err;
+
+	if (sk->s_proto != cache->c_ops->co_protocol)
+		return -NLE_PROTO_MISMATCH;
 
 	NL_DBG(1, "Resyncing cache %p <%s>...\n", cache, nl_cache_name(cache));
 
@@ -939,6 +992,9 @@ int nl_cache_refill(struct nl_sock *sk, struct nl_cache *cache)
 	struct nl_af_group *grp;
 	int err;
 
+	if (sk->s_proto != cache->c_ops->co_protocol)
+		return -NLE_PROTO_MISMATCH;
+
 	nl_cache_clear(cache);
 	grp = cache->c_ops->co_groups;
 	do {
@@ -951,9 +1007,12 @@ restart:
 		if (err < 0)
 			return err;
 
+		NL_DBG(2, "Updating cache %p <%s> for family %u, request sent, waiting for reply\n",
+		       cache, nl_cache_name(cache), grp ? grp->ag_family : AF_UNSPEC);
+
 		err = nl_cache_pickup(sk, cache);
 		if (err == -NLE_DUMP_INTR) {
-			NL_DBG(1, "dump interrupted, restarting!\n");
+			NL_DBG(2, "Dump interrupted, restarting!\n");
 			goto restart;
 		} else if (err < 0)
 			break;
@@ -962,9 +1021,6 @@ restart:
 			grp++;
 	} while (grp && grp->ag_group &&
 			(cache->c_flags & NL_CACHE_AF_ITER));
-
-	NL_DBG(2, "Upading cache %p <%s>, request sent, waiting for dump...\n",
-	       cache, nl_cache_name(cache));
 
 	return err;
 }
@@ -1072,8 +1128,8 @@ void nl_cache_mark_all(struct nl_cache *cache)
 {
 	struct nl_object *obj;
 
-	NL_DBG(2, "Marking all objects in cache %p <%s>...\n",
-	          cache, nl_cache_name(cache));
+	NL_DBG(2, "Marking all objects in cache %p <%s>\n",
+	       cache, nl_cache_name(cache));
 
 	nl_list_for_each_entry(obj, &cache->c_items, ce_list)
 		nl_object_mark(obj);
@@ -1115,7 +1171,7 @@ void nl_cache_dump_filter(struct nl_cache *cache,
 	struct nl_object_ops *ops;
 	struct nl_object *obj;
 
-	NL_DBG(2, "Dumping cache %p <%s> filter %p\n",
+	NL_DBG(2, "Dumping cache %p <%s> with filter %p\n",
 	       cache, nl_cache_name(cache), filter);
 
 	if (type > NL_DUMP_MAX || type < 0)
@@ -1128,7 +1184,7 @@ void nl_cache_dump_filter(struct nl_cache *cache,
 	if (!ops->oo_dump[type])
 		return;
 
-	if (params->dp_buf)
+	if (params && params->dp_buf)
 		memset(params->dp_buf, 0, params->dp_buflen);
 
 	nl_list_for_each_entry(obj, &cache->c_items, ce_list) {

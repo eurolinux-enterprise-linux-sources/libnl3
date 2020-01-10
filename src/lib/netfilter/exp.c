@@ -70,7 +70,7 @@ static struct nla_policy exp_proto_policy[CTA_PROTO_MAX+1] = {
 };
 
 static struct nla_policy exp_nat_policy[CTA_EXPECT_NAT_MAX+1] = {
-	[CTA_EXPECT_NAT_DIR]	= { .type = NLA_U8 },
+	[CTA_EXPECT_NAT_DIR]	= { .type = NLA_U32 },
 	[CTA_EXPECT_NAT_TUPLE]	= { .type = NLA_NESTED },
 };
 
@@ -195,7 +195,7 @@ static int exp_parse_nat(struct nfnl_exp *exp, struct nlattr *attr)
 		return err;
 
 	if (tb[CTA_EXPECT_NAT_DIR])
-		nfnl_exp_set_nat_dir(exp, nla_get_u8(tb[CTA_EXPECT_NAT_DIR]));
+		nfnl_exp_set_nat_dir(exp, nla_get_u32(tb[CTA_EXPECT_NAT_DIR]));
 
 	if (tb[CTA_EXPECT_NAT_TUPLE]) {
 		err = exp_parse_tuple(exp, NFNL_EXP_TUPLE_NAT, tb[CTA_EXPECT_NAT_TUPLE]);
@@ -298,14 +298,20 @@ static int exp_msg_parser(struct nl_cache_ops *ops, struct sockaddr_nl *who,
 	int err;
 
 	if ((err = nfnlmsg_exp_parse(nlh, &exp)) < 0)
-		goto errout;
+		return err;
 
 	err = pp->pp_cb((struct nl_object *) exp, pp);
-errout:
 	nfnl_exp_put(exp);
 	return err;
 }
 
+/**
+ * Send nfnl exp dump request
+ * @arg sk    Netlink socket.
+ *
+ * @return 0 on success or a negative error code. Due to a bug, this function
+ * returns the number of bytes sent. Treat any non-negative number as success.
+ */
 int nfnl_exp_dump_request(struct nl_sock *sk)
 {
 	return nfnl_send_simple(sk, NFNL_SUBSYS_CTNETLINK_EXP, IPCTNL_MSG_EXP_GET,
@@ -351,7 +357,11 @@ static int nfnl_exp_build_tuple(struct nl_msg *msg, const struct nfnl_exp *exp,
 
 	int type = exp_get_tuple_attr(cta);
 
-	tuple = nla_nest_start(msg, cta);
+    if (cta == CTA_EXPECT_NAT)
+        tuple = nla_nest_start(msg, CTA_EXPECT_NAT_TUPLE);
+    else
+        tuple = nla_nest_start(msg, cta);
+
 	if (!tuple)
 		goto nla_put_failure;
 
@@ -416,11 +426,11 @@ static int nfnl_exp_build_nat(struct nl_msg *msg, const struct nfnl_exp *exp)
 	nat = nla_nest_start(msg, CTA_EXPECT_NAT);
 
 	if (nfnl_exp_test_nat_dir(exp)) {
-		NLA_PUT_U8(msg, CTA_EXPECT_NAT_DIR,
+		NLA_PUT_U32(msg, CTA_EXPECT_NAT_DIR,
 				nfnl_exp_get_nat_dir(exp));
 	}
 
-	if ((err = nfnl_exp_build_tuple(msg, exp, CTA_EXPECT_NAT_TUPLE)) < 0)
+	if ((err = nfnl_exp_build_tuple(msg, exp, CTA_EXPECT_NAT)) < 0)
 		goto nla_put_failure;
 
 	nla_nest_end(msg, nat);

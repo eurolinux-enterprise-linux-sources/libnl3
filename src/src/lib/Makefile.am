@@ -1,10 +1,20 @@
 # -*- Makefile -*-
 
-AM_CPPFLAGS  = -Wall -I${top_srcdir}/include -I${top_builddir}/include -D_GNU_SOURCE -DPKGLIBDIR=\"$(pkglibdir)\" -DSYSCONFDIR=\"$(sysconfdir)\" -rdynamic
+AM_CPPFLAGS  = \
+	-I${top_srcdir}/include/linux-private \
+	-I${top_srcdir}/include \
+	-I${top_builddir}/include \
+	-D_GNU_SOURCE \
+	-DPKGLIBDIR=\"$(pkglibdir)\" \
+	-DSYSCONFDIR=\"$(sysconfdir)\"
+
+AM_CFLAGS = -Wall
 AM_LDFLAGS = \
-	-L${top_builddir}/lib \
-	-ldl \
+	-rdynamic \
 	-version-info $(LT_CURRENT):$(LT_REVISION):$(LT_AGE)
+NL_LIBADD = \
+	-L${top_builddir}/lib \
+	-ldl
 
 #nobase_pkglib_LTLIBRARIES = cls/basic.la cls/ematch/cmp.la
 #cls_basic_la_LDFLAGS = -module -version-info 2:0:0
@@ -31,10 +41,16 @@ AM_LDFLAGS = \
 lib_LTLIBRARIES = \
 	libnl-cli-3.la
 
+libnl_cli_3_la_LDFLAGS = \
+	-version-info $(LT_CURRENT):$(LT_REVISION):$(LT_AGE) \
+	-Wl,--version-script=$(top_srcdir)/libnl-cli-3.sym
+libnl_cli_3_la_DEPENDENCIES = \
+	$(top_srcdir)/libnl-cli-3.sym
+
 libnl_cli_3_la_LIBADD  = ${top_builddir}/lib/libnl-3.la \
 		       ${top_builddir}/lib/libnl-route-3.la \
 		       ${top_builddir}/lib/libnl-nf-3.la \
-		       ${top_builddir}/lib/libnl-genl-3.la
+		       ${top_builddir}/lib/libnl-genl-3.la ${NL_LIBADD}
 
 libnl_cli_3_la_SOURCES = \
 	utils.c addr.c ct.c link.c neigh.c rule.c route.c \

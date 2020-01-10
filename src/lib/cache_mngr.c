@@ -165,16 +165,18 @@ int nl_cache_mngr_alloc(struct nl_sock *sk, int protocol, int flags,
 	/* Required to receive async event notifications */
 	nl_socket_disable_seq_check(mngr->cm_sock);
 
-	if ((err = nl_connect(mngr->cm_sock, protocol) < 0))
+	if ((err = nl_connect(mngr->cm_sock, protocol)) < 0)
 		goto errout;
 
-	if ((err = nl_socket_set_nonblocking(mngr->cm_sock) < 0))
+	if ((err = nl_socket_set_nonblocking(mngr->cm_sock)) < 0)
 		goto errout;
 
 	/* Create and allocate socket for sync cache fills */
 	mngr->cm_sync_sock = nl_socket_alloc();
-	if (!mngr->cm_sync_sock)
+	if (!mngr->cm_sync_sock) {
+		err = -NLE_NOMEM;
 		goto errout;
+	}
 	if ((err = nl_connect(mngr->cm_sync_sock, protocol)) < 0)
 		goto errout_free_sync_sock;
 
@@ -389,8 +391,13 @@ int nl_cache_mngr_poll(struct nl_cache_mngr *mngr, int timeout)
 	NL_DBG(3, "Cache manager %p, poll() fd %d\n", mngr, fds.fd);
 	ret = poll(&fds, 1, timeout);
 	NL_DBG(3, "Cache manager %p, poll() returned %d\n", mngr, ret);
-	if (ret < 0)
+	if (ret < 0) {
+		char buf[64];
+
+		NL_DBG(4, "nl_cache_mngr_poll(%p): poll() failed with %d (%s)\n",
+			mngr, errno, strerror_r(errno, buf, sizeof(buf)));
 		return -nl_syserr2nlerr(errno);
+	}
 
 	/* No events, return */
 	if (ret == 0)
@@ -435,7 +442,7 @@ int nl_cache_mngr_data_ready(struct nl_cache_mngr *mngr)
 	}
 
 	nl_cb_put(cb);
-	if (err < 0)
+	if (err < 0 && err != -NLE_AGAIN)
 		return err;
 
 	return nread;
@@ -515,9 +522,10 @@ void nl_cache_mngr_free(struct nl_cache_mngr *mngr)
 	}
 
 	free(mngr->cm_assocs);
-	free(mngr);
 
 	NL_DBG(1, "Cache manager %p freed\n", mngr);
+
+	free(mngr);
 }
 
 /** @} */

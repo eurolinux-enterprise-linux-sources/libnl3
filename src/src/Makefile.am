@@ -2,45 +2,85 @@
 
 SUBDIRS = lib
 
-AM_CPPFLAGS  = -Wall -I${top_srcdir}/include -I${top_builddir}/include -D_GNU_SOURCE -DSYSCONFDIR=\"$(sysconfdir)/libnl\"
+AM_CPPFLAGS  = \
+	-I${top_srcdir}/include/linux-private \
+	-I${top_srcdir}/include \
+	-I${top_builddir}/include \
+	-D_GNU_SOURCE \
+	-DSYSCONFDIR=\"$(sysconfdir)/libnl\"
+
+AM_CFLAGS = -Wall
 
 LDADD = \
 	${top_builddir}/src/lib/libnl-cli-3.la \
 	${top_builddir}/lib/libnl-3.la \
 	${top_builddir}/lib/libnl-nf-3.la \
 	${top_builddir}/lib/libnl-genl-3.la \
-	${top_builddir}/lib/libnl-route-3.la
+	${top_builddir}/lib/libnl-route-3.la \
+	${top_builddir}/lib/libnl-idiag-3.la
 
-sbin_PROGRAMS = \
+cli_programs = \
 	genl-ctrl-list \
-	nl-qdisc-add nl-qdisc-list nl-qdisc-delete \
-	nl-class-add nl-class-list nl-class-delete \
-	nl-cls-add nl-cls-list nl-cls-delete \
+	idiag-socket-details \
+	nf-ct-add \
+	nf-ct-list \
+	nf-exp-add \
+	nf-exp-delete \
+	nf-exp-list \
+	nf-log \
+	nf-monitor \
+	nf-queue \
+	nl-addr-add \
+	nl-addr-delete \
+	nl-addr-list \
+	nl-class-add \
+	nl-class-delete \
 	nl-classid-lookup \
-	nl-pktloc-lookup \
-	nl-link-list
-
-noinst_PROGRAMS = \
-	nf-ct-list nf-log nf-queue nf-monitor \
-	nf-exp-list nf-exp-add nf-exp-delete \
-	nl-addr-add nl-addr-delete nl-addr-list \
-	nl-link-set nl-link-stats \
-	nl-link-ifindex2name nl-link-name2ifindex \
-	nl-neigh-add nl-neigh-delete nl-neigh-list \
-	nl-rule-list \
-	nl-neightbl-list \
-	nl-monitor \
-	nl-tctree-list \
-	nl-route-add nl-route-delete nl-route-get nl-route-list \
+	nl-class-list \
+	nl-cls-add \
+	nl-cls-delete \
+	nl-cls-list \
 	nl-fib-lookup \
-	nl-list-caches nl-list-sockets \
-	nl-util-addr \
 	nl-link-enslave \
-	nl-link-release
+	nl-link-ifindex2name \
+	nl-link-list \
+	nl-link-name2ifindex \
+	nl-link-release \
+	nl-link-set \
+	nl-link-stats \
+	nl-list-caches \
+	nl-list-sockets \
+	nl-monitor \
+	nl-neigh-add \
+	nl-neigh-delete \
+	nl-neigh-list \
+	nl-neightbl-list \
+	nl-pktloc-lookup \
+	nl-qdisc-add \
+	nl-qdisc-delete \
+	nl-qdisc-list \
+	nl-route-add \
+	nl-route-delete \
+	nl-route-get \
+	nl-route-list \
+	nl-rule-list \
+	nl-tctree-list \
+	nl-util-addr
+
+if ENABLE_CLI_INSTALL_BIN
+bin_PROGRAMS = $(cli_programs)
+else
+if ENABLE_CLI_INSTALL_SBIN
+sbin_PROGRAMS = $(cli_programs)
+else
+noinst_PROGRAMS = $(cli_programs)
+endif
+endif
 
 genl_ctrl_list_SOURCES = genl-ctrl-list.c 
 
 nf_ct_list_SOURCES = nf-ct-list.c 
+nf_ct_add_SOURCES = nf-ct-add.c
 nf_log_SOURCES = nf-log.c
 nf_queue_SOURCES = nf-queue.c 
 nf_monitor_SOURCES = nf-monitor.c
@@ -98,3 +138,5 @@ nl_util_addr_SOURCES = nl-util-addr.c
 nl_pktloc_lookup_SOURCES = nl-pktloc-lookup.c
 
 nl_classid_lookup_SOURCES = nl-classid-lookup.c
+
+idiag_socket_details_SOURCES = idiag-socket-details.c

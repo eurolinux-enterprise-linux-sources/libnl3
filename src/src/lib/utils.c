@@ -70,6 +70,7 @@ void nl_cli_print_version(void)
 void nl_cli_fatal(int err, const char *fmt, ...)
 {
 	va_list ap;
+	char buf[256];
 
 	fprintf(stderr, "Error: ");
 
@@ -79,7 +80,7 @@ void nl_cli_fatal(int err, const char *fmt, ...)
 		va_end(ap);
 		fprintf(stderr, "\n");
 	} else
-		fprintf(stderr, "%s\n", strerror(err));
+		fprintf(stderr, "%s\n", strerror_r(err, buf, sizeof(buf)));
 
 	exit(abs(err));
 }
@@ -171,6 +172,23 @@ struct nl_cache *nl_cli_alloc_cache(struct nl_sock *sock, const char *name,
 	int err;
 
 	if ((err = ac(sock, &cache)) < 0)
+		nl_cli_fatal(err, "Unable to allocate %s cache: %s",
+			     name, nl_geterror(err));
+
+	nl_cache_mngt_provide(cache);
+
+	return cache;
+}
+
+struct nl_cache *nl_cli_alloc_cache_flags(struct nl_sock *sock,
+			    const char *name, unsigned int flags,
+			    int (*ac)(struct nl_sock *, struct nl_cache **,
+				      unsigned int))
+{
+	struct nl_cache *cache;
+	int err;
+
+	if ((err = ac(sock, &cache, flags)) < 0)
 		nl_cli_fatal(err, "Unable to allocate %s cache: %s",
 			     name, nl_geterror(err));
 

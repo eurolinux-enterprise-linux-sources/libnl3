@@ -3,6 +3,9 @@
 #include <netlink/route/rtnl.h>
 #include <netlink/route/link.h>
 #include <netlink/route/link/vlan.h>
+#include <netlink/route/link/macvlan.h>
+#include <netlink/route/link/vxlan.h>
+#include <netlink/route/link/bridge.h>
 #include <netlink/route/link/inet.h>
 
 #include <netlink/route/tc.h>
@@ -142,6 +145,9 @@ extern int rtnl_link_set_stat(struct rtnl_link *, const unsigned int, const uint
 extern int rtnl_link_set_type(struct rtnl_link *, const char *);
 extern char *rtnl_link_get_type(struct rtnl_link *);
 
+extern int rtnl_link_enslave(struct nl_sock * sock, struct rtnl_link * master, struct rtnl_link * slave);
+extern int rtnl_link_release(struct nl_sock * sock, struct rtnl_link * slave);
+
 /* <netlink/route/link/vlan.h> */
 
 struct vlan_map
@@ -168,6 +174,111 @@ extern uint32_t *rtnl_link_vlan_get_ingress_map(struct rtnl_link *);
 
 extern int rtnl_link_vlan_set_egress_map(struct rtnl_link *, uint32_t, int);
 extern struct vlan_map *rtnl_link_vlan_get_egress_map(struct rtnl_link *, int *);
+
+/* <netlink/route/link/macvlan.h> */
+
+%cstring_output_maxsize(char *buf, size_t len)
+extern struct rtnl_link *rtnl_link_macvlan_alloc(void);
+extern int		rtnl_link_is_macvlan(struct rtnl_link *);
+extern char *		rtnl_link_macvlan_mode2str(int, char *, size_t);
+extern int		rtnl_link_macvlan_str2mode(const char *);
+extern char *		rtnl_link_macvlan_flags2str(int, char *, size_t);
+extern int		rtnl_link_macvlan_str2flags(const char *);
+extern int		rtnl_link_macvlan_set_mode(struct rtnl_link *, uint32_t);
+extern uint32_t		rtnl_link_macvlan_get_mode(struct rtnl_link *);
+extern int		rtnl_link_macvlan_set_flags(struct rtnl_link *, uint16_t);
+extern int		rtnl_link_macvlan_unset_flags(struct rtnl_link *, uint16_t);
+extern uint16_t		rtnl_link_macvlan_get_flags(struct rtnl_link *);
+
+/* <netlink/route/link/vxlan.h> */
+
+#define VXLAN_ID_MAX 16777215
+
+extern struct rtnl_link *rtnl_link_vxlan_alloc(void);
+
+extern int rtnl_link_is_vxlan(struct rtnl_link *);
+
+extern int rtnl_link_vxlan_set_id(struct rtnl_link *, uint32_t);
+extern int rtnl_link_vxlan_get_id(struct rtnl_link *, uint32_t *);
+
+extern int rtnl_link_vxlan_set_group(struct rtnl_link *, struct nl_addr *);
+extern int rtnl_link_vxlan_get_group(struct rtnl_link *, struct nl_addr **);
+
+extern int rtnl_link_vxlan_set_link(struct rtnl_link *, uint32_t);
+extern int rtnl_link_vxlan_get_link(struct rtnl_link *, uint32_t *);
+
+extern int rtnl_link_vxlan_set_local(struct rtnl_link *, struct nl_addr *);
+extern int rtnl_link_vxlan_get_local(struct rtnl_link *, struct nl_addr **);
+
+extern int rtnl_link_vxlan_set_ttl(struct rtnl_link *, uint8_t);
+extern int rtnl_link_vxlan_get_ttl(struct rtnl_link *);
+
+extern int rtnl_link_vxlan_set_tos(struct rtnl_link *, uint8_t);
+extern int rtnl_link_vxlan_get_tos(struct rtnl_link *);
+
+extern int rtnl_link_vxlan_set_learning(struct rtnl_link *, uint8_t);
+extern int rtnl_link_vxlan_get_learning(struct rtnl_link *);
+extern int rtnl_link_vxlan_enable_learning(struct rtnl_link *);
+extern int rtnl_link_vxlan_disable_learning(struct rtnl_link *);
+
+extern int rtnl_link_vxlan_set_ageing(struct rtnl_link *, uint32_t);
+extern int rtnl_link_vxlan_get_ageing(struct rtnl_link *, uint32_t *);
+
+extern int rtnl_link_vxlan_set_limit(struct rtnl_link *, uint32_t);
+extern int rtnl_link_vxlan_get_limit(struct rtnl_link *, uint32_t *);
+
+extern int rtnl_link_vxlan_set_port_range(struct rtnl_link *,
+										  struct ifla_vxlan_port_range *);
+extern int rtnl_link_vxlan_get_port_range(struct rtnl_link *,
+										  struct ifla_vxlan_port_range *);
+
+extern int rtnl_link_vxlan_set_proxy(struct rtnl_link *, uint8_t);
+extern int rtnl_link_vxlan_get_proxy(struct rtnl_link *);
+extern int rtnl_link_vxlan_enable_proxy(struct rtnl_link *);
+extern int rtnl_link_vxlan_disable_proxy(struct rtnl_link *);
+
+extern int rtnl_link_vxlan_set_rsc(struct rtnl_link *, uint8_t);
+extern int rtnl_link_vxlan_get_rsc(struct rtnl_link *);
+extern int rtnl_link_vxlan_enable_rsc(struct rtnl_link *);
+extern int rtnl_link_vxlan_disable_rsc(struct rtnl_link *);
+
+extern int rtnl_link_vxlan_set_l2miss(struct rtnl_link *, uint8_t);
+extern int rtnl_link_vxlan_get_l2miss(struct rtnl_link *);
+extern int rtnl_link_vxlan_enable_l2miss(struct rtnl_link *);
+extern int rtnl_link_vxlan_disable_l2miss(struct rtnl_link *);
+
+extern int rtnl_link_vxlan_set_l3miss(struct rtnl_link *, uint8_t);
+extern int rtnl_link_vxlan_get_l3miss(struct rtnl_link *);
+extern int rtnl_link_vxlan_enable_l3miss(struct rtnl_link *);
+extern int rtnl_link_vxlan_disable_l3miss(struct rtnl_link *);
+
+/* <netlink/route/link/bridge.h> */
+
+enum rtnl_link_bridge_flags {
+	RTNL_BRIDGE_HAIRPIN_MODE	= 0x0001,
+	RTNL_BRIDGE_BPDU_GUARD		= 0x0002,
+	RTNL_BRIDGE_ROOT_BLOCK		= 0x0004,
+	RTNL_BRIDGE_FAST_LEAVE		= 0x0008,
+};
+
+extern int	rtnl_link_is_bridge(struct rtnl_link *);
+extern int	rtnl_link_bridge_has_ext_info(struct rtnl_link *);
+
+extern int	rtnl_link_bridge_set_port_state(struct rtnl_link *, uint8_t );
+extern int	rtnl_link_bridge_get_port_state(struct rtnl_link *);
+
+extern int	rtnl_link_bridge_set_priority(struct rtnl_link *, uint16_t);
+extern int	rtnl_link_bridge_get_priority(struct rtnl_link *);
+
+extern int	rtnl_link_bridge_set_cost(struct rtnl_link *, uint32_t);
+extern int	rtnl_link_bridge_get_cost(struct rtnl_link *, uint32_t *);
+
+extern int	rtnl_link_bridge_unset_flags(struct rtnl_link *, unsigned int);
+extern int	rtnl_link_bridge_set_flags(struct rtnl_link *, unsigned int);
+extern int	rtnl_link_bridge_get_flags(struct rtnl_link *);
+
+extern char * rtnl_link_bridge_flags2str(int, char *, size_t);
+extern int	rtnl_link_bridge_str2flags(const char *);
 
 /* <netlink/route/link/inet.h> */
 %cstring_output_maxsize(char *buf, size_t len)

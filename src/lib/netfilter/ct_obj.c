@@ -51,6 +51,8 @@
 #define CT_ATTR_REPL_ICMP_CODE	(1UL << 23)
 #define CT_ATTR_REPL_PACKETS	(1UL << 24)
 #define CT_ATTR_REPL_BYTES	(1UL << 25)
+#define CT_ATTR_TIMESTAMP	(1UL << 26)
+#define CT_ATTR_ZONE	(1UL << 27)
 /** @endcond */
 
 static void ct_free_data(struct nl_object *c)
@@ -192,6 +194,20 @@ static void ct_dump_line(struct nl_object *a, struct nl_dump_params *p)
 	if (nfnl_ct_test_mark(ct) && nfnl_ct_get_mark(ct))
 		nl_dump(p, "mark %u ", nfnl_ct_get_mark(ct));
 
+	if (nfnl_ct_test_zone(ct))
+		nl_dump(p, "zone %hu ", nfnl_ct_get_zone(ct));
+
+	if (nfnl_ct_test_timestamp(ct)) {
+		const struct nfnl_ct_timestamp *tstamp = nfnl_ct_get_timestamp(ct);
+		int64_t delta_time = tstamp->stop - tstamp->start;
+
+		if (delta_time > 0)
+			delta_time /= NSEC_PER_SEC;
+		else
+			delta_time = 0;
+		nl_dump(p, "delta-time %llu ", delta_time);
+	}
+
 	nl_dump(p, "\n");
 }
 
@@ -281,12 +297,12 @@ static void ct_dump_stats(struct nl_object *a, struct nl_dump_params *p)
 	}
 }
 
-static int ct_compare(struct nl_object *_a, struct nl_object *_b,
-			uint32_t attrs, int flags)
+static uint64_t ct_compare(struct nl_object *_a, struct nl_object *_b,
+			   uint64_t attrs, int flags)
 {
 	struct nfnl_ct *a = (struct nfnl_ct *) _a;
 	struct nfnl_ct *b = (struct nfnl_ct *) _b;
-	int diff = 0;
+	uint64_t diff = 0;
 
 #define CT_DIFF(ATTR, EXPR) ATTR_DIFF(attrs, CT_ATTR_##ATTR, a, b, EXPR)
 #define CT_DIFF_VAL(ATTR, FIELD) CT_DIFF(ATTR, a->FIELD != b->FIELD)
@@ -335,32 +351,32 @@ static int ct_compare(struct nl_object *_a, struct nl_object *_b,
 }
 
 static const struct trans_tbl ct_attrs[] = {
-	__ADD(CT_ATTR_FAMILY,		family)
-	__ADD(CT_ATTR_PROTO,		proto)
-	__ADD(CT_ATTR_TCP_STATE,	tcpstate)
-	__ADD(CT_ATTR_STATUS,		status)
-	__ADD(CT_ATTR_TIMEOUT,		timeout)
-	__ADD(CT_ATTR_MARK,		mark)
-	__ADD(CT_ATTR_USE,		use)
-	__ADD(CT_ATTR_ID,		id)
-	__ADD(CT_ATTR_ORIG_SRC,		origsrc)
-	__ADD(CT_ATTR_ORIG_DST,		origdst)
-	__ADD(CT_ATTR_ORIG_SRC_PORT,	origsrcport)
-	__ADD(CT_ATTR_ORIG_DST_PORT,	origdstport)
-	__ADD(CT_ATTR_ORIG_ICMP_ID,	origicmpid)
-	__ADD(CT_ATTR_ORIG_ICMP_TYPE,	origicmptype)
-	__ADD(CT_ATTR_ORIG_ICMP_CODE,	origicmpcode)
-	__ADD(CT_ATTR_ORIG_PACKETS,	origpackets)
-	__ADD(CT_ATTR_ORIG_BYTES,	origbytes)
-	__ADD(CT_ATTR_REPL_SRC,		replysrc)
-	__ADD(CT_ATTR_REPL_DST,		replydst)
-	__ADD(CT_ATTR_REPL_SRC_PORT,	replysrcport)
-	__ADD(CT_ATTR_REPL_DST_PORT,	replydstport)
-	__ADD(CT_ATTR_REPL_ICMP_ID,	replyicmpid)
-	__ADD(CT_ATTR_REPL_ICMP_TYPE,	replyicmptype)
-	__ADD(CT_ATTR_REPL_ICMP_CODE,	replyicmpcode)
-	__ADD(CT_ATTR_REPL_PACKETS,	replypackets)
-	__ADD(CT_ATTR_REPL_BYTES,	replybytes)
+	__ADD(CT_ATTR_FAMILY,		family),
+	__ADD(CT_ATTR_PROTO,		proto),
+	__ADD(CT_ATTR_TCP_STATE,	tcpstate),
+	__ADD(CT_ATTR_STATUS,		status),
+	__ADD(CT_ATTR_TIMEOUT,		timeout),
+	__ADD(CT_ATTR_MARK,		mark),
+	__ADD(CT_ATTR_USE,		use),
+	__ADD(CT_ATTR_ID,		id),
+	__ADD(CT_ATTR_ORIG_SRC,		origsrc),
+	__ADD(CT_ATTR_ORIG_DST,		origdst),
+	__ADD(CT_ATTR_ORIG_SRC_PORT,	origsrcport),
+	__ADD(CT_ATTR_ORIG_DST_PORT,	origdstport),
+	__ADD(CT_ATTR_ORIG_ICMP_ID,	origicmpid),
+	__ADD(CT_ATTR_ORIG_ICMP_TYPE,	origicmptype),
+	__ADD(CT_ATTR_ORIG_ICMP_CODE,	origicmpcode),
+	__ADD(CT_ATTR_ORIG_PACKETS,	origpackets),
+	__ADD(CT_ATTR_ORIG_BYTES,	origbytes),
+	__ADD(CT_ATTR_REPL_SRC,		replysrc),
+	__ADD(CT_ATTR_REPL_DST,		replydst),
+	__ADD(CT_ATTR_REPL_SRC_PORT,	replysrcport),
+	__ADD(CT_ATTR_REPL_DST_PORT,	replydstport),
+	__ADD(CT_ATTR_REPL_ICMP_ID,	replyicmpid),
+	__ADD(CT_ATTR_REPL_ICMP_TYPE,	replyicmptype),
+	__ADD(CT_ATTR_REPL_ICMP_CODE,	replyicmpcode),
+	__ADD(CT_ATTR_REPL_PACKETS,	replypackets),
+	__ADD(CT_ATTR_REPL_BYTES,	replybytes),
 };
 
 static char *ct_attrs2str(int attrs, char *buf, size_t len)
@@ -442,16 +458,16 @@ uint8_t nfnl_ct_get_tcp_state(const struct nfnl_ct *ct)
 }
 
 static const struct trans_tbl tcp_states[] = {
-	__ADD(TCP_CONNTRACK_NONE,NONE)
-	__ADD(TCP_CONNTRACK_SYN_SENT,SYN_SENT)
-	__ADD(TCP_CONNTRACK_SYN_RECV,SYN_RECV)
-	__ADD(TCP_CONNTRACK_ESTABLISHED,ESTABLISHED)
-	__ADD(TCP_CONNTRACK_FIN_WAIT,FIN_WAIT)
-	__ADD(TCP_CONNTRACK_CLOSE_WAIT,CLOSE_WAIT)
-	__ADD(TCP_CONNTRACK_LAST_ACK,LAST_ACK)
-	__ADD(TCP_CONNTRACK_TIME_WAIT,TIME_WAIT)
-	__ADD(TCP_CONNTRACK_CLOSE,CLOSE)
-	__ADD(TCP_CONNTRACK_LISTEN,LISTEN)
+	__ADD(TCP_CONNTRACK_NONE,NONE),
+	__ADD(TCP_CONNTRACK_SYN_SENT,SYN_SENT),
+	__ADD(TCP_CONNTRACK_SYN_RECV,SYN_RECV),
+	__ADD(TCP_CONNTRACK_ESTABLISHED,ESTABLISHED),
+	__ADD(TCP_CONNTRACK_FIN_WAIT,FIN_WAIT),
+	__ADD(TCP_CONNTRACK_CLOSE_WAIT,CLOSE_WAIT),
+	__ADD(TCP_CONNTRACK_LAST_ACK,LAST_ACK),
+	__ADD(TCP_CONNTRACK_TIME_WAIT,TIME_WAIT),
+	__ADD(TCP_CONNTRACK_CLOSE,CLOSE),
+	__ADD(TCP_CONNTRACK_LISTEN,LISTEN),
 };
 
 char *nfnl_ct_tcp_state2str(uint8_t state, char *buf, size_t len)
@@ -478,23 +494,28 @@ void nfnl_ct_unset_status(struct nfnl_ct *ct, uint32_t status)
 	ct->ce_mask |= CT_ATTR_STATUS;
 }
 
+int nfnl_ct_test_status(const struct nfnl_ct *ct)
+{
+	return !!(ct->ce_mask & CT_ATTR_STATUS);
+}
+
 uint32_t nfnl_ct_get_status(const struct nfnl_ct *ct)
 {
 	return ct->ct_status;
 }
 
 static const struct trans_tbl status_flags[] = {
-	__ADD(IPS_EXPECTED, expected)
-	__ADD(IPS_SEEN_REPLY, seen_reply)
-	__ADD(IPS_ASSURED, assured)
-	__ADD(IPS_CONFIRMED, confirmed)
-	__ADD(IPS_SRC_NAT, snat)
-	__ADD(IPS_DST_NAT, dnat)
-	__ADD(IPS_SEQ_ADJUST, seqadjust)
-	__ADD(IPS_SRC_NAT_DONE, snat_done)
-	__ADD(IPS_DST_NAT_DONE, dnat_done)
-	__ADD(IPS_DYING, dying)
-	__ADD(IPS_FIXED_TIMEOUT, fixed_timeout)
+	__ADD(IPS_EXPECTED, expected),
+	__ADD(IPS_SEEN_REPLY, seen_reply),
+	__ADD(IPS_ASSURED, assured),
+	__ADD(IPS_CONFIRMED, confirmed),
+	__ADD(IPS_SRC_NAT, snat),
+	__ADD(IPS_DST_NAT, dnat),
+	__ADD(IPS_SEQ_ADJUST, seqadjust),
+	__ADD(IPS_SRC_NAT_DONE, snat_done),
+	__ADD(IPS_DST_NAT_DONE, dnat_done),
+	__ADD(IPS_DYING, dying),
+	__ADD(IPS_FIXED_TIMEOUT, fixed_timeout),
 };
 
 char * nfnl_ct_status2str(int flags, char *buf, size_t len)
@@ -570,6 +591,22 @@ int nfnl_ct_test_id(const struct nfnl_ct *ct)
 uint32_t nfnl_ct_get_id(const struct nfnl_ct *ct)
 {
 	return ct->ct_id;
+}
+
+void nfnl_ct_set_zone(struct nfnl_ct *ct, uint16_t zone)
+{
+	ct->ct_zone = zone;
+	ct->ce_mask |= CT_ATTR_ZONE;
+}
+
+int nfnl_ct_test_zone(const struct nfnl_ct *ct)
+{
+	return !!(ct->ce_mask & CT_ATTR_ZONE);
+}
+
+uint16_t nfnl_ct_get_zone(const struct nfnl_ct *ct)
+{
+	return ct->ct_zone;
 }
 
 static int ct_set_addr(struct nfnl_ct *ct, struct nl_addr *addr,
@@ -775,6 +812,23 @@ uint64_t nfnl_ct_get_bytes(const struct nfnl_ct *ct, int repl)
 	const struct nfnl_ct_dir *dir = repl ? &ct->ct_repl : &ct->ct_orig;
 
 	return dir->bytes;
+}
+
+void nfnl_ct_set_timestamp(struct nfnl_ct *ct, uint64_t start, uint64_t stop)
+{
+	ct->ct_tstamp.start = start;
+	ct->ct_tstamp.stop = stop;
+	ct->ce_mask |= CT_ATTR_TIMESTAMP;
+}
+
+int nfnl_ct_test_timestamp(const struct nfnl_ct *ct)
+{
+	return !!(ct->ce_mask & CT_ATTR_TIMESTAMP);
+}
+
+const struct nfnl_ct_timestamp *nfnl_ct_get_timestamp(const struct nfnl_ct *ct)
+{
+	return &ct->ct_tstamp;
 }
 
 /** @} */

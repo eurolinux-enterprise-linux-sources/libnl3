@@ -153,7 +153,7 @@ struct nlattr *nlmsg_attrdata(const struct nlmsghdr *nlh, int hdrlen)
  */
 int nlmsg_attrlen(const struct nlmsghdr *nlh, int hdrlen)
 {
-	return nlmsg_len(nlh) - NLMSG_ALIGN(hdrlen);
+	return max_t(int, nlmsg_len(nlh) - NLMSG_ALIGN(hdrlen), 0);
 }
 
 /** @} */
@@ -275,8 +275,6 @@ static struct nl_msg *__nlmsg_alloc(size_t len)
 	if (!nm->nm_nlh)
 		goto errout;
 
-	memset(nm->nm_nlh, 0, sizeof(struct nlmsghdr));
-
 	nm->nm_protocol = -1;
 	nm->nm_size = len;
 	nm->nm_nlh->nlmsg_len = nlmsg_total_size(0);
@@ -387,14 +385,11 @@ struct nl_msg *nlmsg_convert(struct nlmsghdr *hdr)
 
 	nm = __nlmsg_alloc(NLMSG_ALIGN(hdr->nlmsg_len));
 	if (!nm)
-		goto errout;
+		return NULL;
 
 	memcpy(nm->nm_nlh, hdr, hdr->nlmsg_len);
 
 	return nm;
-errout:
-	nlmsg_free(nm);
-	return NULL;
 }
 
 /**
@@ -574,8 +569,8 @@ void nlmsg_free(struct nl_msg *msg)
 
 	if (msg->nm_refcnt <= 0) {
 		free(msg->nm_nlh);
-		free(msg);
 		NL_DBG(2, "msg %p: Freed\n", msg);
+		free(msg);
 	}
 }
 
@@ -642,10 +637,10 @@ struct ucred *nlmsg_get_creds(struct nl_msg *msg)
  */
 
 static const struct trans_tbl nl_msgtypes[] = {
-	__ADD(NLMSG_NOOP,NOOP)
-	__ADD(NLMSG_ERROR,ERROR)
-	__ADD(NLMSG_DONE,DONE)
-	__ADD(NLMSG_OVERRUN,OVERRUN)
+	__ADD(NLMSG_NOOP,NOOP),
+	__ADD(NLMSG_ERROR,ERROR),
+	__ADD(NLMSG_DONE,DONE),
+	__ADD(NLMSG_OVERRUN,OVERRUN),
 };
 
 char *nl_nlmsgtype2str(int type, char *buf, size_t size)
@@ -767,7 +762,7 @@ static inline void dump_hex(FILE *ofd, char *start, int len, int prefix)
 	int i, a, c, limit;
 	char ascii[21] = {0};
 
-	limit = 18 - (prefix * 2);
+	limit = 16 - (prefix * 2);
 	prefix_line(ofd, prefix);
 	fprintf(ofd, "    ");
 
@@ -777,7 +772,7 @@ static inline void dump_hex(FILE *ofd, char *start, int len, int prefix)
 		fprintf(ofd, "%02x ", v);
 		ascii[a++] = isprint(v) ? v : '.';
 
-		if (c == limit-1) {
+		if (++c >= limit) {
 			fprintf(ofd, "%s\n", ascii);
 			if (i < (len - 1)) {
 				prefix_line(ofd, prefix);
@@ -785,8 +780,7 @@ static inline void dump_hex(FILE *ofd, char *start, int len, int prefix)
 			}
 			a = c = 0;
 			memset(ascii, 0, sizeof(ascii));
-		} else
-			c++;
+		}
 	}
 
 	if (c != 0) {
@@ -816,12 +810,60 @@ static void print_hdr(FILE *ofd, struct nl_msg *msg)
 	} else
 		nl_nlmsgtype2str(nlh->nlmsg_type, buf, sizeof(buf));
 
-	fprintf(ofd, "    .nlmsg_type = %d <%s>\n", nlh->nlmsg_type, buf);
-	fprintf(ofd, "    .nlmsg_flags = %d <%s>\n", nlh->nlmsg_flags,
+	fprintf(ofd, "    .type = %d <%s>\n", nlh->nlmsg_type, buf);
+	fprintf(ofd, "    .flags = %d <%s>\n", nlh->nlmsg_flags,
 		nl_nlmsg_flags2str(nlh->nlmsg_flags, buf, sizeof(buf)));
-	fprintf(ofd, "    .nlmsg_seq = %d\n", nlh->nlmsg_seq);
-	fprintf(ofd, "    .nlmsg_pid = %d\n", nlh->nlmsg_pid);
+	fprintf(ofd, "    .seq = %d\n", nlh->nlmsg_seq);
+	fprintf(ofd, "    .port = %d\n", nlh->nlmsg_pid);
 
+}
+
+static void print_genl_hdr(FILE *ofd, void *start)
+{
+	struct genlmsghdr *ghdr = start;
+
+	fprintf(ofd, "  [GENERIC NETLINK HEADER] %zu octets\n", GENL_HDRLEN);
+	fprintf(ofd, "    .cmd = %u\n", ghdr->cmd);
+	fprintf(ofd, "    .version = %u\n", ghdr->version);
+	fprintf(ofd, "    .unused = %#x\n", ghdr->reserved);
+}
+
+static void *print_genl_msg(struct nl_msg *msg, FILE *ofd, struct nlmsghdr *hdr,
+			    struct nl_cache_ops *ops, int *payloadlen)
+{
+	void *data = nlmsg_data(hdr);
+
+	if (*payloadlen < GENL_HDRLEN)
+		return data;
+
+	print_genl_hdr(ofd, data);
+
+	*payloadlen -= GENL_HDRLEN;
+	data += GENL_HDRLEN;
+
+	if (ops) {
+		int hdrsize = ops->co_hdrsize - GENL_HDRLEN;
+
+		if (hdrsize > 0) {
+			if (*payloadlen < hdrsize)
+				return data;
+
+			fprintf(ofd, "  [HEADER] %d octets\n", hdrsize);
+			dump_hex(ofd, data, hdrsize, 0);
+
+			*payloadlen -= hdrsize;
+			data += hdrsize;
+		}
+	}
+
+	return data;
+}
+
+static void dump_attr(FILE *ofd, struct nlattr *attr, int prefix)
+{
+	int len = nla_len(attr);
+
+	dump_hex(ofd, nla_data(attr), len, prefix);
 }
 
 static void dump_attrs(FILE *ofd, struct nlattr *attrs, int attrlen,
@@ -834,14 +876,18 @@ static void dump_attrs(FILE *ofd, struct nlattr *attrs, int attrlen,
 		int padlen, alen = nla_len(nla);
 
 		prefix_line(ofd, prefix);
-		fprintf(ofd, "  [ATTR %02d%s] %d octets\n", nla_type(nla),
-			nla->nla_type & NLA_F_NESTED ? " NESTED" : "",
-			alen);
 
-		if (nla->nla_type & NLA_F_NESTED)
+		if (nla->nla_type == 0)
+			fprintf(ofd, "  [ATTR PADDING] %d octets\n", alen);
+		else
+			fprintf(ofd, "  [ATTR %02d%s] %d octets\n", nla_type(nla),
+				nla_is_nested(nla) ? " NESTED" : "",
+				alen);
+
+		if (nla_is_nested(nla))
 			dump_attrs(ofd, nla_data(nla), alen, prefix+1);
 		else
-			dump_hex(ofd, nla_data(nla), alen, prefix);
+			dump_attr(ofd, nla, prefix);
 
 		padlen = nla_padlen(alen);
 		if (padlen > 0) {
@@ -859,6 +905,63 @@ static void dump_attrs(FILE *ofd, struct nlattr *attrs, int attrlen,
 	}
 }
 
+static void dump_error_msg(struct nl_msg *msg, FILE *ofd)
+{
+	struct nlmsghdr *hdr = nlmsg_hdr(msg);
+	struct nlmsgerr *err = nlmsg_data(hdr);
+
+	fprintf(ofd, "  [ERRORMSG] %zu octets\n", sizeof(*err));
+
+	if (nlmsg_len(hdr) >= sizeof(*err)) {
+		char buf[256];
+		struct nl_msg *errmsg;
+
+		fprintf(ofd, "    .error = %d \"%s\"\n", err->error,
+			strerror_r(-err->error, buf, sizeof(buf)));
+		fprintf(ofd, "  [ORIGINAL MESSAGE] %zu octets\n", sizeof(*hdr));
+
+		errmsg = nlmsg_inherit(&err->msg);
+		print_hdr(ofd, errmsg);
+		nlmsg_free(errmsg);
+	}
+}
+
+static void print_msg(struct nl_msg *msg, FILE *ofd, struct nlmsghdr *hdr)
+{
+	struct nl_cache_ops *ops;
+	int payloadlen = nlmsg_len(hdr);
+	int attrlen = 0;
+	void *data;
+
+	data = nlmsg_data(hdr);
+	ops = nl_cache_ops_associate_safe(nlmsg_get_proto(msg),
+					  hdr->nlmsg_type);
+	if (ops) {
+		attrlen = nlmsg_attrlen(hdr, ops->co_hdrsize);
+		payloadlen -= attrlen;
+	}
+
+	if (msg->nm_protocol == NETLINK_GENERIC)
+		data = print_genl_msg(msg, ofd, hdr, ops, &payloadlen);
+
+	if (payloadlen) {
+		fprintf(ofd, "  [PAYLOAD] %d octets\n", payloadlen);
+		dump_hex(ofd, data, payloadlen, 0);
+	}
+
+	if (attrlen) {
+		struct nlattr *attrs;
+		int attrlen;
+		
+		attrs = nlmsg_attrdata(hdr, ops->co_hdrsize);
+		attrlen = nlmsg_attrlen(hdr, ops->co_hdrsize);
+		dump_attrs(ofd, attrs, attrlen, 0);
+	}
+
+	if (ops)
+		nl_cache_ops_put(ops);
+}
+
 /**
  * Dump message in human readable format to file descriptor
  * @arg msg		Message to print
@@ -869,56 +972,18 @@ void nl_msg_dump(struct nl_msg *msg, FILE *ofd)
 	struct nlmsghdr *hdr = nlmsg_hdr(msg);
 	
 	fprintf(ofd, 
-	"--------------------------   BEGIN NETLINK MESSAGE "
-	"---------------------------\n");
+	"--------------------------   BEGIN NETLINK MESSAGE ---------------------------\n");
 
-	fprintf(ofd, "  [HEADER] %zu octets\n", sizeof(struct nlmsghdr));
+	fprintf(ofd, "  [NETLINK HEADER] %zu octets\n", sizeof(struct nlmsghdr));
 	print_hdr(ofd, msg);
 
-	if (hdr->nlmsg_type == NLMSG_ERROR &&
-	    hdr->nlmsg_len >= nlmsg_msg_size(sizeof(struct nlmsgerr))) {
-		struct nl_msg *errmsg;
-		struct nlmsgerr *err = nlmsg_data(hdr);
-
-		fprintf(ofd, "  [ERRORMSG] %zu octets\n", sizeof(*err));
-		fprintf(ofd, "    .error = %d \"%s\"\n", err->error,
-			strerror(-err->error));
-		fprintf(ofd, "  [ORIGINAL MESSAGE] %zu octets\n", sizeof(*hdr));
-
-		errmsg = nlmsg_inherit(&err->msg);
-		print_hdr(ofd, errmsg);
-		nlmsg_free(errmsg);
-	} else if (nlmsg_len(hdr) > 0) {
-		struct nl_cache_ops *ops;
-		int payloadlen = nlmsg_len(hdr);
-		int attrlen = 0;
-
-		ops = nl_cache_ops_associate_safe(nlmsg_get_proto(msg),
-						  hdr->nlmsg_type);
-		if (ops) {
-			attrlen = nlmsg_attrlen(hdr, ops->co_hdrsize);
-			payloadlen -= attrlen;
-		}
-
-		fprintf(ofd, "  [PAYLOAD] %d octets\n", payloadlen);
-		dump_hex(ofd, nlmsg_data(hdr), payloadlen, 0);
-
-		if (attrlen) {
-			struct nlattr *attrs;
-			int attrlen;
-			
-			attrs = nlmsg_attrdata(hdr, ops->co_hdrsize);
-			attrlen = nlmsg_attrlen(hdr, ops->co_hdrsize);
-			dump_attrs(ofd, attrs, attrlen, 0);
-		}
-
-		if (ops)
-			nl_cache_ops_put(ops);
-	}
+	if (hdr->nlmsg_type == NLMSG_ERROR)
+		dump_error_msg(msg, ofd);
+	else if (nlmsg_len(hdr) > 0)
+		print_msg(msg, ofd, hdr);
 
 	fprintf(ofd, 
-	"---------------------------  END NETLINK MESSAGE   "
-	"---------------------------\n");
+	"---------------------------  END NETLINK MESSAGE   ---------------------------\n");
 }
 
 /** @} */

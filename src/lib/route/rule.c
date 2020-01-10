@@ -245,12 +245,12 @@ static void rule_dump_stats(struct nl_object *obj, struct nl_dump_params *p)
 
 #define RULE_ATTR_FLAGS		0x0008
 
-static int rule_compare(struct nl_object *_a, struct nl_object *_b,
-			uint32_t attrs, int flags)
+static uint64_t rule_compare(struct nl_object *_a, struct nl_object *_b,
+			     uint64_t attrs, int flags)
 {
 	struct rtnl_rule *a = (struct rtnl_rule *) _a;
 	struct rtnl_rule *b = (struct rtnl_rule *) _b;
-	int diff = 0;
+	uint64_t diff = 0;
 
 #define RULE_DIFF(ATTR, EXPR) ATTR_DIFF(attrs, RULE_ATTR_##ATTR, a, b, EXPR)
 
@@ -274,19 +274,19 @@ static int rule_compare(struct nl_object *_a, struct nl_object *_b,
 }
 
 static const struct trans_tbl rule_attrs[] = {
-	__ADD(RULE_ATTR_FAMILY, family)
-	__ADD(RULE_ATTR_TABLE, table)
-	__ADD(RULE_ATTR_ACTION, action)
-	__ADD(RULE_ATTR_IIFNAME, iifname)
-	__ADD(RULE_ATTR_OIFNAME, oifname)
-	__ADD(RULE_ATTR_PRIO, prio)
-	__ADD(RULE_ATTR_MARK, mark)
-	__ADD(RULE_ATTR_MASK, mask)
-	__ADD(RULE_ATTR_GOTO, goto)
-	__ADD(RULE_ATTR_SRC, src)
-	__ADD(RULE_ATTR_DST, dst)
-	__ADD(RULE_ATTR_DSFIELD, dsfield)
-	__ADD(RULE_ATTR_FLOW, flow)
+	__ADD(RULE_ATTR_FAMILY, family),
+	__ADD(RULE_ATTR_TABLE, table),
+	__ADD(RULE_ATTR_ACTION, action),
+	__ADD(RULE_ATTR_IIFNAME, iifname),
+	__ADD(RULE_ATTR_OIFNAME, oifname),
+	__ADD(RULE_ATTR_PRIO, prio),
+	__ADD(RULE_ATTR_MARK, mark),
+	__ADD(RULE_ATTR_MASK, mask),
+	__ADD(RULE_ATTR_GOTO, goto),
+	__ADD(RULE_ATTR_SRC, src),
+	__ADD(RULE_ATTR_DST, dst),
+	__ADD(RULE_ATTR_DSFIELD, dsfield),
+	__ADD(RULE_ATTR_FLOW, flow),
 };
 
 static char *rule_attrs2str(int attrs, char *buf, size_t len)

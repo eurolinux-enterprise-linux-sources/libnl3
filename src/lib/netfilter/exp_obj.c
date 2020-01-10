@@ -301,12 +301,12 @@ static int exp_cmp_l4proto_icmp (union nfnl_exp_protodata *a, union nfnl_exp_pro
 	return d;
 }
 
-static int exp_compare(struct nl_object *_a, struct nl_object *_b,
-							uint32_t attrs, int flags)
+static uint64_t exp_compare(struct nl_object *_a, struct nl_object *_b,
+			    uint64_t attrs, int flags)
 {
 	struct nfnl_exp *a = (struct nfnl_exp *) _a;
 	struct nfnl_exp *b = (struct nfnl_exp *) _b;
-	int diff = 0;
+	uint64_t diff = 0;
 
 #define EXP_DIFF(ATTR, EXPR) ATTR_DIFF(attrs, EXP_ATTR_##ATTR, a, b, EXPR)
 #define EXP_DIFF_VAL(ATTR, FIELD) EXP_DIFF(ATTR, a->FIELD != b->FIELD)
@@ -367,35 +367,35 @@ static int exp_compare(struct nl_object *_a, struct nl_object *_b,
 
 // CLI arguments?
 static const struct trans_tbl exp_attrs[] = {
-	__ADD(EXP_ATTR_FAMILY,				family)
-	__ADD(EXP_ATTR_TIMEOUT,				timeout)
-	__ADD(EXP_ATTR_ID,				id)
-	__ADD(EXP_ATTR_HELPER_NAME,			helpername)
-	__ADD(EXP_ATTR_ZONE,				zone)
-	__ADD(EXP_ATTR_CLASS,				class)
-	__ADD(EXP_ATTR_FLAGS,				flags)
-	__ADD(EXP_ATTR_FN,				function)
-	__ADD(EXP_ATTR_EXPECT_IP_SRC,			expectipsrc)
-	__ADD(EXP_ATTR_EXPECT_IP_DST,			expectipdst)
-	__ADD(EXP_ATTR_EXPECT_L4PROTO_NUM,		expectprotonum)
-	__ADD(EXP_ATTR_EXPECT_L4PROTO_PORTS,		expectports)
-	__ADD(EXP_ATTR_EXPECT_L4PROTO_ICMP,		expecticmp)
-	__ADD(EXP_ATTR_MASTER_IP_SRC,			masteripsrc)
-	__ADD(EXP_ATTR_MASTER_IP_DST,			masteripdst)
-	__ADD(EXP_ATTR_MASTER_L4PROTO_NUM,		masterprotonum)
-	__ADD(EXP_ATTR_MASTER_L4PROTO_PORTS,		masterports)
-	__ADD(EXP_ATTR_MASTER_L4PROTO_ICMP,		mastericmp)
-	__ADD(EXP_ATTR_MASK_IP_SRC,			maskipsrc)
-	__ADD(EXP_ATTR_MASK_IP_DST,			maskipdst)
-	__ADD(EXP_ATTR_MASK_L4PROTO_NUM,		maskprotonum)
-	__ADD(EXP_ATTR_MASK_L4PROTO_PORTS,		maskports)
-	__ADD(EXP_ATTR_MASK_L4PROTO_ICMP,		maskicmp)
-	__ADD(EXP_ATTR_NAT_IP_SRC,			natipsrc)
-	__ADD(EXP_ATTR_NAT_IP_DST,			natipdst)
-	__ADD(EXP_ATTR_NAT_L4PROTO_NUM,			natprotonum)
-	__ADD(EXP_ATTR_NAT_L4PROTO_PORTS,		natports)
-	__ADD(EXP_ATTR_NAT_L4PROTO_ICMP,		naticmp)
-	__ADD(EXP_ATTR_NAT_DIR,				natdir)
+	__ADD(EXP_ATTR_FAMILY,				family),
+	__ADD(EXP_ATTR_TIMEOUT,				timeout),
+	__ADD(EXP_ATTR_ID,				id),
+	__ADD(EXP_ATTR_HELPER_NAME,			helpername),
+	__ADD(EXP_ATTR_ZONE,				zone),
+	__ADD(EXP_ATTR_CLASS,				class),
+	__ADD(EXP_ATTR_FLAGS,				flags),
+	__ADD(EXP_ATTR_FN,				function),
+	__ADD(EXP_ATTR_EXPECT_IP_SRC,			expectipsrc),
+	__ADD(EXP_ATTR_EXPECT_IP_DST,			expectipdst),
+	__ADD(EXP_ATTR_EXPECT_L4PROTO_NUM,		expectprotonum),
+	__ADD(EXP_ATTR_EXPECT_L4PROTO_PORTS,		expectports),
+	__ADD(EXP_ATTR_EXPECT_L4PROTO_ICMP,		expecticmp),
+	__ADD(EXP_ATTR_MASTER_IP_SRC,			masteripsrc),
+	__ADD(EXP_ATTR_MASTER_IP_DST,			masteripdst),
+	__ADD(EXP_ATTR_MASTER_L4PROTO_NUM,		masterprotonum),
+	__ADD(EXP_ATTR_MASTER_L4PROTO_PORTS,		masterports),
+	__ADD(EXP_ATTR_MASTER_L4PROTO_ICMP,		mastericmp),
+	__ADD(EXP_ATTR_MASK_IP_SRC,			maskipsrc),
+	__ADD(EXP_ATTR_MASK_IP_DST,			maskipdst),
+	__ADD(EXP_ATTR_MASK_L4PROTO_NUM,		maskprotonum),
+	__ADD(EXP_ATTR_MASK_L4PROTO_PORTS,		maskports),
+	__ADD(EXP_ATTR_MASK_L4PROTO_ICMP,		maskicmp),
+	__ADD(EXP_ATTR_NAT_IP_SRC,			natipsrc),
+	__ADD(EXP_ATTR_NAT_IP_DST,			natipdst),
+	__ADD(EXP_ATTR_NAT_L4PROTO_NUM,			natprotonum),
+	__ADD(EXP_ATTR_NAT_L4PROTO_PORTS,		natports),
+	__ADD(EXP_ATTR_NAT_L4PROTO_ICMP,		naticmp),
+	__ADD(EXP_ATTR_NAT_DIR,				natdir),
 };
 
 static char *exp_attrs2str(int attrs, char *buf, size_t len)
@@ -467,9 +467,9 @@ uint32_t nfnl_exp_get_flags(const struct nfnl_exp *exp)
 }
 
 static const struct trans_tbl flag_table[] = {
-	__ADD(IPS_EXPECTED, expected)
-	__ADD(IPS_SEEN_REPLY, seen_reply)
-	__ADD(IPS_ASSURED, assured)
+	__ADD(IPS_EXPECTED, expected),
+	__ADD(IPS_SEEN_REPLY, seen_reply),
+	__ADD(IPS_ASSURED, assured),
 };
 
 char * nfnl_exp_flags2str(int flags, char *buf, size_t len)

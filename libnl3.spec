@@ -1,29 +1,21 @@
+Name: libnl3
+Version: 3.2.28
+Release: 2%{?dist}
 Summary: Convenience library for kernel netlink sockets
 Group: Development/Libraries
 License: LGPLv2
-Name: libnl3
-Version: 3.2.21
-Release: 9%{?dist}
 URL: http://www.infradead.org/~tgr/libnl/
-Source: http://www.infradead.org/~tgr/libnl/files/libnl-%{version}.tar.gz
-Source1: http://www.infradead.org/~tgr/libnl/files/libnl-doc-%{version}.tar.gz
-BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
+
+%define fullversion %{version}
+
+Source: http://www.infradead.org/~tgr/libnl/files/libnl-%{fullversion}.tar.gz
+Source1: http://www.infradead.org/~tgr/libnl/files/libnl-doc-%{fullversion}.tar.gz
+
+Patch1: 0001-compare-v4-addr-rh1370503.patch
+
 BuildRequires: flex bison
 BuildRequires: python
-BuildRequires: autoconf
-BuildRequires: automake
-BuildRequires: libtool
-Patch0: rh1057024_ifa_flags_1.patch
-Patch1: rh1057024_ifa_flags_2.patch
-Patch2: rh1057024_ifa_flags_3.patch
-Patch3: rh1040626-nl-Increase-receive-buffer-size-to-4-pages.patch
-Patch4: 0004-add-nl_has_capability.patch
-Patch5: 0005-rtnl_route_build_msg-set-scope.patch
-Patch6: 0006-nl_msec2str-fix.patch
-Patch7: 0007-relax-parsing-protinfo.patch
-Patch8: 0008-rh1127718-inet6_addr_gen.patch
-Patch9: 0009-rh1181255-EAGAIN.patch
-Patch10: 0010-rh1249158-local-port-EADDRINUSE.patch
+BuildRequires: libtool autoconf automake
 
 %description
 This package contains a convenience library to simplify
@@ -58,23 +50,13 @@ Requires: %{name} = %{version}-%{release}
 This package contains libnl3 API documentation
 
 %prep
-%setup -q -n libnl-%{version}
-%patch0 -p1 -b .0000-rh1057024_ifa_flags_1.orig
-%patch1 -p1 -b .0001-rh1057024_ifa_flags_2.orig
-%patch2 -p1 -b .0002-rh1057024_ifa_flags_3.orig
-%patch3 -p1 -b .0003-rh1040626.orig
-%patch4 -p1 -b .0004-add-nl_has_capability.orig
-%patch5 -p1 -b .0005-rtnl_route_build_msg-set-scope.orig
-%patch6 -p1 -b .0006-nl_msec2str-fix.orig
-%patch7 -p1 -b .0007-relax-parsing-protinfo.orig
-%patch8 -p1 -b .0008-rh1127718-inet6_addr_gen.orig
-%patch9 -p1 -b .0009-rh1181255-EAGAIN.orig
-%patch10 -p1
+%setup -q -n libnl-%{fullversion}
+%patch1 -p1
 
 tar -xzf %SOURCE1
 
 %build
-autoreconf -i --force
+autoreconf -vif
 %configure --disable-static
 make %{?_smp_mflags}
 
@@ -83,20 +65,39 @@ make install DESTDIR=$RPM_BUILD_ROOT
 
 find $RPM_BUILD_ROOT -name \*.la -delete
 
+# rhel-7.2 installed some cli tools to /usr/sbin. Recent libnl3 releases prefer to
+# install *all* cli tools bo /usr/bin. Also do that for rhel-7.3 but hardlink the
+# previous locations in /usr/sbin.
+mkdir -p "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/genl-ctrl-list"    "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-class-add"      "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-class-delete"   "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-classid-lookup" "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-class-list"     "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-cls-add"        "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-cls-delete"     "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-cls-list"       "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-link-list"      "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-pktloc-lookup"  "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-qdisc-add"      "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-qdisc-delete"   "%{buildroot}%{_sbindir}/"
+ln "%{buildroot}%{_bindir}/nl-qdisc-list"     "%{buildroot}%{_sbindir}/"
+
+%check
+make check
+
 %post -p /sbin/ldconfig
 %post cli -p /sbin/ldconfig
 %postun -p /sbin/ldconfig
 %postun cli -p /sbin/ldconfig
 
 %files
-%defattr(-,root,root,-)
 %doc COPYING
 %exclude %{_libdir}/libnl-cli*.so.*
 %{_libdir}/libnl-*.so.*
 %config(noreplace) %{_sysconfdir}/*
 
 %files devel
-%defattr(-,root,root,-)
 %doc COPYING
 %{_includedir}/libnl3/netlink/
 %dir %{_includedir}/libnl3/
@@ -104,31 +105,42 @@ find $RPM_BUILD_ROOT -name \*.la -delete
 %{_libdir}/pkgconfig/*.pc
 
 %files cli
-%defattr(-,root,root,-)
 %doc COPYING
 %{_libdir}/libnl-cli*.so.*
 %{_libdir}/libnl/
 %{_sbindir}/*
-%{_mandir}/man8/* 
+%{_bindir}/*
+%{_mandir}/man8/*
 
 %files doc
-%defattr(-,root,root,-)
 %doc COPYING
-%doc libnl-doc-%{version}/*.html
-%doc libnl-doc-%{version}/*.css
-%doc libnl-doc-%{version}/stylesheets/*
-%doc libnl-doc-%{version}/images/*
-%doc libnl-doc-%{version}/images/icons/*
-%doc libnl-doc-%{version}/images/icons/callouts/*
-%doc libnl-doc-%{version}/api/*
+%doc libnl-doc-%{fullversion}/*.html
+%doc libnl-doc-%{fullversion}/*.css
+%doc libnl-doc-%{fullversion}/stylesheets/*
+%doc libnl-doc-%{fullversion}/images/*
+%doc libnl-doc-%{fullversion}/images/icons/*
+%doc libnl-doc-%{fullversion}/images/icons/callouts/*
+%doc libnl-doc-%{fullversion}/api/*
 
 %changelog
-* Wed Nov 04 2015 Scientific Linux Auto Patch Process <SCIENTIFIC-LINUX-DEVEL@LISTSERV.FNAL.GOV>
-- Eliminated rpmbuild "bogus date" error due to inconsistent weekday,
-  by assuming the date is correct and changing the weekday.
+* Fri Aug 26 2016 Thomas Haller <thaller@redhat.com> - 3.2.28-2
+- route: fix nl_object_identical() comparing AF_INET addresses (rh #1370503)
 
-* Mon Oct  5 2015 Thomas Haller <thaller@redhat.com> - 3.2.21-9
-- improve local port handling for netlink socket with EADDRINUSE (rh #1268767)
+* Sat Jul  9 2016 Thomas Haller <thaller@redhat.com> - 3.2.28-1
+- update to latest upstream release 3.2.28 (rh #1296058)
+
+* Thu Jun 30 2016 Thomas Haller <thaller@redhat.com> - 3.2.28-0.1
+- update to latest upstream release 3.2.28-rc1 (rh #1296058)
+
+* Fri Jan  8 2016 Thomas Haller <thaller@redhat.com> - 3.2.27-1
+- rebase package to upstream version 3.2.27 (rh #1296058)
+
+* Wed Sep 30 2015 Thomas Haller <thaller@redhat.com> - 3.2.21-10
+- rtnl: fix lookup in rtnl_neigh_get() to ignore address family (rh #1261028)
+
+* Mon Aug 24 2015 Thomas Haller <thaller@redhat.com> - 3.2.21-9
+- improve local port handling for netlink socket with EADDRINUSE (rh #1249158)
+- rtnl: backport support for link-netnsid attribute (rh #1255050)
 
 * Mon Jan 12 2015 Lubomir Rintel <lrintel@redhat.com> - 3.2.21-8
 - properly propagate EAGAIN error status (rh #1181255)

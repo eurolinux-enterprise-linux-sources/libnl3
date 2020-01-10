@@ -208,7 +208,7 @@ static void route_dump_details(struct nl_object *a, struct nl_dump_params *p)
 {
 	struct rtnl_route *r = (struct rtnl_route *) a;
 	struct nl_cache *link_cache;
-	char buf[128];
+	char buf[256];
 	int i;
 
 	link_cache = nl_cache_mngt_require_safe("route/link");
@@ -259,7 +259,7 @@ static void route_dump_details(struct nl_object *a, struct nl_dump_params *p)
 	if ((r->ce_mask & ROUTE_ATTR_CACHEINFO) && r->rt_cacheinfo.rtci_error) {
 		nl_dump_line(p, "    cacheinfo error %d (%s)\n",
 			r->rt_cacheinfo.rtci_error,
-			strerror(-r->rt_cacheinfo.rtci_error));
+			strerror_r(-r->rt_cacheinfo.rtci_error, buf, sizeof(buf)));
 	}
 
 	if (r->ce_mask & ROUTE_ATTR_METRICS) {
@@ -307,7 +307,9 @@ static void route_keygen(struct nl_object *obj, uint32_t *hashkey,
 		uint32_t	rt_prio;
 		char 		rt_addr[0];
 	} __attribute__((packed)) *rkey;
+#ifdef NL_DEBUG
 	char buf[INET6_ADDRSTRLEN+5];
+#endif
 
 	if (route->rt_dst)
 		addr = route->rt_dst;
@@ -341,13 +343,14 @@ static void route_keygen(struct nl_object *obj, uint32_t *hashkey,
 	return;
 }
 
-static int route_compare(struct nl_object *_a, struct nl_object *_b,
-			uint32_t attrs, int flags)
+static uint64_t route_compare(struct nl_object *_a, struct nl_object *_b,
+			      uint64_t attrs, int flags)
 {
 	struct rtnl_route *a = (struct rtnl_route *) _a;
 	struct rtnl_route *b = (struct rtnl_route *) _b;
 	struct rtnl_nexthop *nh_a, *nh_b;
-	int i, diff = 0, found;
+	int i, found;
+	uint64_t diff = 0;
 
 #define ROUTE_DIFF(ATTR, EXPR) ATTR_DIFF(attrs, ROUTE_ATTR_##ATTR, a, b, EXPR)
 
@@ -449,8 +452,10 @@ static int route_update(struct nl_object *old_obj, struct nl_object *new_obj)
 	struct rtnl_route *new_route = (struct rtnl_route *) new_obj;
 	struct rtnl_route *old_route = (struct rtnl_route *) old_obj;
 	struct rtnl_nexthop *new_nh;
-	char buf[INET6_ADDRSTRLEN+5];
 	int action = new_obj->ce_msgtype;
+#ifdef NL_DEBUG
+	char buf[INET6_ADDRSTRLEN+5];
+#endif
 
 	/*
 	 * ipv6 ECMP route notifications from the kernel come as
@@ -540,24 +545,24 @@ static int route_update(struct nl_object *old_obj, struct nl_object *new_obj)
 }
 
 static const struct trans_tbl route_attrs[] = {
-	__ADD(ROUTE_ATTR_FAMILY, family)
-	__ADD(ROUTE_ATTR_TOS, tos)
-	__ADD(ROUTE_ATTR_TABLE, table)
-	__ADD(ROUTE_ATTR_PROTOCOL, protocol)
-	__ADD(ROUTE_ATTR_SCOPE, scope)
-	__ADD(ROUTE_ATTR_TYPE, type)
-	__ADD(ROUTE_ATTR_FLAGS, flags)
-	__ADD(ROUTE_ATTR_DST, dst)
-	__ADD(ROUTE_ATTR_SRC, src)
-	__ADD(ROUTE_ATTR_IIF, iif)
-	__ADD(ROUTE_ATTR_OIF, oif)
-	__ADD(ROUTE_ATTR_GATEWAY, gateway)
-	__ADD(ROUTE_ATTR_PRIO, prio)
-	__ADD(ROUTE_ATTR_PREF_SRC, pref_src)
-	__ADD(ROUTE_ATTR_METRICS, metrics)
-	__ADD(ROUTE_ATTR_MULTIPATH, multipath)
-	__ADD(ROUTE_ATTR_REALMS, realms)
-	__ADD(ROUTE_ATTR_CACHEINFO, cacheinfo)
+	__ADD(ROUTE_ATTR_FAMILY, family),
+	__ADD(ROUTE_ATTR_TOS, tos),
+	__ADD(ROUTE_ATTR_TABLE, table),
+	__ADD(ROUTE_ATTR_PROTOCOL, protocol),
+	__ADD(ROUTE_ATTR_SCOPE, scope),
+	__ADD(ROUTE_ATTR_TYPE, type),
+	__ADD(ROUTE_ATTR_FLAGS, flags),
+	__ADD(ROUTE_ATTR_DST, dst),
+	__ADD(ROUTE_ATTR_SRC, src),
+	__ADD(ROUTE_ATTR_IIF, iif),
+	__ADD(ROUTE_ATTR_OIF, oif),
+	__ADD(ROUTE_ATTR_GATEWAY, gateway),
+	__ADD(ROUTE_ATTR_PRIO, prio),
+	__ADD(ROUTE_ATTR_PREF_SRC, pref_src),
+	__ADD(ROUTE_ATTR_METRICS, metrics),
+	__ADD(ROUTE_ATTR_MULTIPATH, multipath),
+	__ADD(ROUTE_ATTR_REALMS, realms),
+	__ADD(ROUTE_ATTR_CACHEINFO, cacheinfo),
 };
 
 static char *route_attrs2str(int attrs, char *buf, size_t len)
@@ -1194,7 +1199,7 @@ int rtnl_route_build_msg(struct nl_msg *msg, struct rtnl_route *route)
 	if (route->rt_src)
 		rtmsg.rtm_src_len = nl_addr_get_prefixlen(route->rt_src);
 
-	if (rtmsg.rtm_scope == RT_SCOPE_NOWHERE)
+	if (!(route->ce_mask & ROUTE_ATTR_SCOPE))
 		rtmsg.rtm_scope = rtnl_route_guess_scope(route);
 
 	if (rtnl_route_get_nnexthops(route) == 1) {

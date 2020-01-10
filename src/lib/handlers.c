@@ -35,7 +35,7 @@ static void print_header_content(FILE *ofd, struct nlmsghdr *n)
 {
 	char flags[128];
 	char type[32];
-	
+
 	fprintf(ofd, "type=%s length=%u flags=<%s> sequence-nr=%u pid=%u",
 		nl_nlmsgtype2str(n->nlmsg_type, type, sizeof(type)),
 		n->nlmsg_len, nl_nlmsg_flags2str(n->nlmsg_flags, flags,
@@ -71,7 +71,7 @@ static int nl_overrun_handler_verbose(struct nl_msg *msg, void *arg)
 	fprintf(ofd, "-- Error: Netlink Overrun: ");
 	print_header_content(ofd, nlmsg_hdr(msg));
 	fprintf(ofd, "\n");
-	
+
 	return NL_STOP;
 }
 
@@ -79,9 +79,10 @@ static int nl_error_handler_verbose(struct sockaddr_nl *who,
 				    struct nlmsgerr *e, void *arg)
 {
 	FILE *ofd = arg ? arg : stderr;
+	char buf[256];
 
 	fprintf(ofd, "-- Error received: %s\n-- Original message: ",
-		strerror(-e->error));
+		strerror_r(-e->error, buf, sizeof(buf)));
 	print_header_content(ofd, &e->msg);
 	fprintf(ofd, "\n");
 
@@ -106,7 +107,7 @@ static int nl_finish_handler_debug(struct nl_msg *msg, void *arg)
 	fprintf(ofd, "-- Debug: End of multipart message block: ");
 	print_header_content(ofd, nlmsg_hdr(msg));
 	fprintf(ofd, "\n");
-	
+
 	return NL_STOP;
 }
 
@@ -116,7 +117,7 @@ static int nl_msg_in_handler_debug(struct nl_msg *msg, void *arg)
 
 	fprintf(ofd, "-- Debug: Received Message:\n");
 	nl_msg_dump(msg, ofd);
-	
+
 	return NL_OK;
 }
 
@@ -202,7 +203,7 @@ struct nl_cb *nl_cb_alloc(enum nl_cb_kind kind)
 	int i;
 	struct nl_cb *cb;
 
-	if (kind < 0 || kind > NL_CB_KIND_MAX)
+	if ((unsigned int) kind > NL_CB_KIND_MAX)
 		return NULL;
 
 	cb = calloc(1, sizeof(*cb));
@@ -210,6 +211,7 @@ struct nl_cb *nl_cb_alloc(enum nl_cb_kind kind)
 		return NULL;
 
 	cb->cb_refcnt = 1;
+	cb->cb_active = NL_CB_TYPE_MAX + 1;
 
 	for (i = 0; i <= NL_CB_TYPE_MAX; i++)
 		nl_cb_set(cb, i, kind, NULL, NULL);
@@ -228,7 +230,7 @@ struct nl_cb *nl_cb_alloc(enum nl_cb_kind kind)
 struct nl_cb *nl_cb_clone(struct nl_cb *orig)
 {
 	struct nl_cb *cb;
-	
+
 	cb = nl_cb_alloc(NL_CB_DEFAULT);
 	if (!cb)
 		return NULL;
@@ -260,6 +262,17 @@ void nl_cb_put(struct nl_cb *cb)
 		free(cb);
 }
 
+/**
+ * Obtain type of current active callback
+ * @arg cb		callback to query
+ *
+ * @return type or __NL_CB_TYPE_MAX if none active
+ */
+enum nl_cb_type nl_cb_active_type(struct nl_cb *cb)
+{
+	return cb->cb_active;
+}
+
 /** @} */
 
 /**
@@ -268,7 +281,7 @@ void nl_cb_put(struct nl_cb *cb)
  */
 
 /**
- * Set up a callback 
+ * Set up a callback
  * @arg cb		callback set
  * @arg type		callback to modify
  * @arg kind		kind of implementation
@@ -280,10 +293,10 @@ void nl_cb_put(struct nl_cb *cb)
 int nl_cb_set(struct nl_cb *cb, enum nl_cb_type type, enum nl_cb_kind kind,
 	      nl_recvmsg_msg_cb_t func, void *arg)
 {
-	if (type < 0 || type > NL_CB_TYPE_MAX)
+	if ((unsigned int) type > NL_CB_TYPE_MAX)
 		return -NLE_RANGE;
 
-	if (kind < 0 || kind > NL_CB_KIND_MAX)
+	if ((unsigned int) kind > NL_CB_KIND_MAX)
 		return -NLE_RANGE;
 
 	if (kind == NL_CB_CUSTOM) {
@@ -330,7 +343,7 @@ int nl_cb_set_all(struct nl_cb *cb, enum nl_cb_kind kind,
 int nl_cb_err(struct nl_cb *cb, enum nl_cb_kind kind,
 	      nl_recvmsg_err_cb_t func, void *arg)
 {
-	if (kind < 0 || kind > NL_CB_KIND_MAX)
+	if ((unsigned int) kind > NL_CB_KIND_MAX)
 		return -NLE_RANGE;
 
 	if (kind == NL_CB_CUSTOM) {

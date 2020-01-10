@@ -124,7 +124,7 @@ errout:
 static void result_dump_line(struct nl_object *obj, struct nl_dump_params *p)
 {
 	struct flnl_result *res = (struct flnl_result *) obj;
-	char buf[128];
+	char buf[256];
 
 	nl_dump_line(p, "table %s prefixlen %u next-hop-selector %u\n",
 		rtnl_route_table2str(res->fr_table_id, buf, sizeof(buf)),
@@ -133,7 +133,7 @@ static void result_dump_line(struct nl_object *obj, struct nl_dump_params *p)
 		     nl_rtntype2str(res->fr_type, buf, sizeof(buf)));
 	nl_dump(p, "scope %s error %s (%d)\n",
 		rtnl_scope2str(res->fr_scope, buf, sizeof(buf)),
-		strerror(-res->fr_error), res->fr_error);
+		strerror_r(-res->fr_error, buf, sizeof(buf)), res->fr_error);
 }
 
 static void result_dump_details(struct nl_object *obj, struct nl_dump_params *p)
@@ -141,8 +141,8 @@ static void result_dump_details(struct nl_object *obj, struct nl_dump_params *p)
 	result_dump_line(obj, p);
 }
 
-static int result_compare(struct nl_object *_a, struct nl_object *_b,
-			uint32_t attrs, int flags)
+static uint64_t result_compare(struct nl_object *_a, struct nl_object *_b,
+			uint64_t attrs, int flags)
 {
 	return 0;
 }
@@ -270,7 +270,7 @@ int flnl_lookup(struct nl_sock *sk, struct flnl_request *req,
 	if (err < 0)
 		return err;
 
-	return nl_cache_pickup(sk, cache);
+	return nl_cache_pickup_checkdup(sk, cache);
 }
 
 /** @} */

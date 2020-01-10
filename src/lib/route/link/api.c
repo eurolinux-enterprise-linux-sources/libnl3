@@ -326,7 +326,7 @@ int rtnl_link_af_unregister(struct rtnl_link_af_ops *ops)
 	int err = -NLE_INVAL;
 
 	if (!ops)
-		goto errout;
+		return err;
 
 	nl_write_lock(&info_lock);
 	if (!af_ops[ops->ao_family]) {
@@ -345,7 +345,7 @@ int rtnl_link_af_unregister(struct rtnl_link_af_ops *ops)
 		ops->ao_family);
 
 errout:
-	nl_write_lock(&info_lock);
+	nl_write_unlock(&info_lock);
 
 	return err;
 }
@@ -365,26 +365,52 @@ errout:
 int rtnl_link_af_data_compare(struct rtnl_link *a, struct rtnl_link *b,
 			      int family)
 {
-	struct rtnl_link_af_ops *af_ops = rtnl_link_af_ops_lookup(family);
+	struct rtnl_link_af_ops *af_ops;
 	int ret = 0;
 
+	if (!a->l_af_data[family] && !b->l_af_data[family])
+		return 0;
+
+	if (!a->l_af_data[family] || !b->l_af_data[family])
+		return ~0;
+
+	af_ops = rtnl_link_af_ops_lookup(family);
 	if (!af_ops)
 		return ~0;
 
-	if (!a->l_af_data[family] && !b->l_af_data[family])
-		goto out;
-
-	if (!a->l_af_data[family] || !b->l_af_data[family]) {
+	if (af_ops->ao_compare == NULL) {
 		ret = ~0;
 		goto out;
 	}
 
-	if (af_ops->ao_compare)
-		ret = af_ops->ao_compare(a, b, family, ~0, 0);
+	ret = af_ops->ao_compare(a, b, family, ~0, 0);
+
 out:
 	rtnl_link_af_ops_put(af_ops);
 
 	return ret;
+}
+
+/**
+ * Compare link info data
+ * @arg a              Link object a
+ * @arg b              Link object b
+ *
+ * This function will compare link_info data between two links
+ * a and b
+ *
+ * @return 0 if link_info data matches or is not present
+ * or != 0 if it mismatches.
+ */
+int rtnl_link_info_data_compare(struct rtnl_link *a, struct rtnl_link *b, int flags)
+{
+	if (a->l_info_ops != b->l_info_ops)
+		return ~0;
+
+	if (!a->l_info_ops || !a->l_info_ops->io_compare)
+		return 0;
+
+	return a->l_info_ops->io_compare(a, b, flags);
 }
 
 /** @} */

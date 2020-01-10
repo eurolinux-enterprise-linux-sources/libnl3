@@ -51,9 +51,10 @@
 #include <linux/gen_stats.h>
 #include <linux/ip_mp_alg.h>
 #include <linux/atm.h>
-#include <linux/inetdevice.h>
+#include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/snmp.h>
+#include <linux/xfrm.h>
 
 #ifndef DISABLE_PTHREADS
 #include <pthread.h>
@@ -67,12 +68,14 @@
 #include <netlink-private/cache-api.h>
 #include <netlink-private/types.h>
 
+#define NSEC_PER_SEC	1000000000L
+
 struct trans_tbl {
-	int i;
+	uint64_t i;
 	const char *a;
 };
 
-#define __ADD(id, name) { .i = id, .a = #name },
+#define __ADD(id, name) { .i = id, .a = #name }
 
 struct trans_list {
 	int i;
@@ -80,24 +83,39 @@ struct trans_list {
 	struct nl_list_head list;
 };
 
-#define NL_DEBUG	1
-
-#define NL_DBG(LVL,FMT,ARG...) \
-	do {	\
-		if (LVL <= nl_debug) \
-			fprintf(stderr, "DBG<" #LVL ">: " FMT, ##ARG); \
+#ifdef NL_DEBUG
+#define NL_DBG(LVL,FMT,ARG...)						\
+	do {								\
+		if (LVL <= nl_debug) {					\
+			int _errsv = errno;				\
+			fprintf(stderr,					\
+				"DBG<" #LVL ">%20s:%-4u %s: " FMT,	\
+				__FILE__, __LINE__,			\
+				__PRETTY_FUNCTION__, ##ARG);		\
+			errno = _errsv;					\
+		}							\
 	} while (0)
+#else /* NL_DEBUG */
+#define NL_DBG(LVL,FMT,ARG...) do { } while(0)
+#endif /* NL_DEBUG */
 
 #define BUG()                            				\
 	do {                                 				\
-		NL_DBG(1, "BUG: %s:%d\n",  				\
-			__FILE__, __LINE__);         			\
+		fprintf(stderr, "BUG at file position %s:%d:%s\n",  	\
+			__FILE__, __LINE__, __PRETTY_FUNCTION__); 	\
 		assert(0);						\
 	} while (0)
 
+#define BUG_ON(condition)						\
+	do {								\
+		if (condition)						\
+			BUG();						\
+	} while (0)
+
+
 #define APPBUG(msg)							\
 	do {								\
-		NL_DBG(1, "APPLICATION BUG: %s:%d:%s: %s\n",		\
+		fprintf(stderr, "APPLICATION BUG: %s:%d:%s: %s\n",	\
 			__FILE__, __LINE__, __PRETTY_FUNCTION__, msg);	\
 		assert(0);						\
 	} while(0)
@@ -118,10 +136,16 @@ extern char *__flags2str(int, char *, size_t, const struct trans_tbl *, size_t);
 extern int __str2flags(const char *, const struct trans_tbl *, size_t);
 
 extern void dump_from_ops(struct nl_object *, struct nl_dump_params *);
+extern struct rtnl_link *link_lookup(struct nl_cache *cache, int ifindex);
 
 static inline int nl_cb_call(struct nl_cb *cb, int type, struct nl_msg *msg)
 {
-	return cb->cb_set[type](msg, cb->cb_args[type]);
+	int ret;
+
+	cb->cb_active = type;
+	ret = cb->cb_set[type](msg, cb->cb_args[type]);
+	cb->cb_active = __NL_CB_TYPE_MAX;
+	return ret;
 }
 
 #define ARRAY_SIZE(X) (sizeof(X) / sizeof((X)[0]))

@@ -60,6 +60,10 @@ struct rtnl_link_info_ops
 	 * in either io_alloc() or io_parse(). */
 	void	      (*io_free)(struct rtnl_link *);
 
+	/** Called to compare link info parameters between two links. */
+	int	      (*io_compare)(struct rtnl_link *, struct rtnl_link *,
+				    int flags);
+
 	struct nl_list_head		io_list;
 };
 
@@ -115,6 +119,16 @@ struct rtnl_link_af_ops
 	int		      (*ao_fill_af)(struct rtnl_link *,
 					    struct nl_msg *msg, void *);
 
+	/** Called if the full IFLA_AF_SPEC data needs to be parsed. Typically
+	 * stores the parsed data in the address family specific buffer. */
+	int                   (*ao_parse_af_full)(struct rtnl_link *,
+	                                          struct nlattr *, void *);
+
+	/** Called for GETLINK message to the kernel. Used to append
+	 * link address family specific attributes to the request message. */
+	int		      (*ao_get_af)(struct nl_msg *msg,
+					   uint32_t *ext_filter_mask);
+
 	/** Dump address family specific link attributes */
 	void		      (*ao_dump[NL_DUMP_MAX+1])(struct rtnl_link *,
 							struct nl_dump_params *,
@@ -145,6 +159,9 @@ extern int			rtnl_link_af_unregister(struct rtnl_link_af_ops *);
 extern int			rtnl_link_af_data_compare(struct rtnl_link *a,
 							  struct rtnl_link *b,
 							  int family);
+extern int			rtnl_link_info_data_compare(struct rtnl_link *a,
+							    struct rtnl_link *b,
+							    int flags);
 
 #ifdef __cplusplus
 }
